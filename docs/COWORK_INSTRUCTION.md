@@ -7,7 +7,7 @@
 - **Home lab:** ZimaOS (Mac Mini 2014, 4GB RAM) at 192.168.0.127, runs Postgres, Redis, Immich, Home Assistant, Cloudflare Tunnel — all Docker
 - **Domain:** techvigilant.com (Cloudflare, zone ID: c1f525bdc6a810b8bdba76c6716f6276)
 - **GitHub email:** abrarhasinpranto@gmail.com
-- **Project path on AbrarPC (Windows):** E:\Code\Projects\story-engine
+- **Project path on AbrarPC (Windows):** C:\Users\abrar\Desktop\Dev Tools\Code\story-engine
 - **Project path on ZimaOS (prod):** /DATA/AppData/story-engine
 - **Live URL:** https://storyteller.techvigilant.com
 - **Style:** Technical and direct. Show code, not pseudocode. Build iteratively, review together.
@@ -198,7 +198,7 @@ Per-story cost (naive, all Opus, no cache): ~$1.03
 
 ### Suggested opening when resuming:
 > "Story Engine architecture is complete and the project folder is live at
-> E:\Code\Projects\story-engine with git initialised, GitHub Actions CI/CD wired,
+> C:\Users\abrar\Desktop\Dev Tools\Code\story-engine with git initialised, GitHub Actions CI/CD wired,
 > and docs for the Cloudflare Tunnel deployment at storyteller.techvigilant.com.
 > Ready to build — starting with Priority 1: the LangGraph StateGraph.
 > Shall I write the state schema and supervisor node first?"
@@ -211,7 +211,7 @@ Per-story cost (naive, all Opus, no cache): ~$1.03
 | Excalidraw checkpoint | a14d54ee574840d5a5 |
 | Cloudflare Zone ID | c1f525bdc6a810b8bdba76c6716f6276 |
 | Live URL | https://storyteller.techvigilant.com |
-| Project folder (Windows) | E:\Code\Projects\story-engine |
+| Project folder (Windows) | C:\Users\abrar\Desktop\Dev Tools\Code\story-engine |
 | Project folder (ZimaOS) | /DATA/AppData/story-engine |
 | ZimaOS IP | 192.168.0.127 |
 | Payment gateway | SSLCommerz (sslcommerz.com) |
