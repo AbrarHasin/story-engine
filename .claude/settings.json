@@ -2,19 +2,8 @@
   "mcpServers": {
     "filesystem": {
       "command": "mcp-server-filesystem",
-      "args": ["/home/abrar/code/story-engine"]
-    },
-    "memory": {
-      "command": "mcp-server-memory"
-    },
-    "sequential-thinking": {
-      "command": "mcp-server-sequential-thinking"
-    },
-    "playwright": {
-      "command": "playwright-mcp",
       "args": [
-        "--headless",
-        "--browser", "chromium"
+        "/home/abrar/code/story-engine"
       ]
     }
   },
@@ -30,7 +19,5 @@
         ]
       }
     ]
-  },
-  "alwaysThinkingEnabled": true,
-  "theme": "dark"
+  }
 }

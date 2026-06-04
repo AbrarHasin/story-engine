@@ -50,5 +50,6 @@ secrets/
 test-results/
 playwright-report/
 
-# Claude Code local settings (machine-specific permissions)
+# Claude Code local/machine-specific files
 .claude/settings.local.json
+.claude/CLAUDE.md
