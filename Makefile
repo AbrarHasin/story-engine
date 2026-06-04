@@ -58,15 +58,39 @@ logs: ## Tail all container logs
 logs-backend: ## Tail backend logs only
 	docker compose logs -f backend
 
+# ── Deploy ───────────────────────────────────────────────────────────────────
+
+.PHONY: deploy
+deploy: ## Pull latest, sync deps, migrate, restart services, smoke test
+	@echo "[deploy] Pulling latest code..."
+	git pull origin master
+	@echo "[deploy] Syncing Python dependencies..."
+	$(PIP) install -q --upgrade -r backend/requirements.txt
+	@echo "[deploy] Running database migrations..."
+	cd backend && .venv/bin/alembic upgrade head
+	@echo "[deploy] Restarting backend..."
+	bash scripts/restart-backend.sh
+	@echo "[deploy] Restarting frontend..."
+	bash scripts/restart-frontend.sh
+	@echo "[deploy] Waiting for backend to come up..."
+	sleep 6
+	@echo "[deploy] Smoke test..."
+	@curl -sf http://localhost:8080/health | python3 -c "\
+import sys, json; \
+d = json.load(sys.stdin); \
+print('[deploy] Health:', d); \
+sys.exit(0 if d.get('status') in ('ok', 'degraded') else 1)"
+	@echo "[deploy] Done."
+
 # ── Database ─────────────────────────────────────────────────────────────────
 
 .PHONY: migrate
 migrate: ## Run Alembic migrations (upgrade head)
-	cd backend && ../ $(ALEMBIC) upgrade head
+	cd backend && .venv/bin/alembic upgrade head
 
 .PHONY: migration
 migration: ## Create a new migration (NAME=<description>)
-	cd backend && ../$(ALEMBIC) revision --autogenerate -m "$(NAME)"
+	cd backend && .venv/bin/alembic revision --autogenerate -m "$(NAME)"
 
 .PHONY: db-reset
 db-reset: ## Drop + recreate DB and run migrations fresh

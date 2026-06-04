@@ -18,6 +18,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/abrar/code/story-engine/.claude/hooks/post_push_deploy.py",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
