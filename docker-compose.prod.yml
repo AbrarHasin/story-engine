@@ -1,0 +1,84 @@
+# Production override — run with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Changes from base:
+#   - Backend: no --reload, gunicorn with uvicorn workers, production DB URL
+#   - Frontend: nginx prod build (no dev server)
+#   - No volume mounts for live code (use built images)
+#   - Restart policies on all services
+#   - Nginx reverse proxy on port 80 (Cloudflare Tunnel → nginx → backend/frontend)
+
+services:
+
+  # ── Override: Story Engine Backend ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://storyengine:${POSTGRES_PASSWORD:-changeme}@postgres:5432/storyengine
+      REDIS_URL: redis://redis:6379
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      LITELLM_BASE_URL: ${LITELLM_BASE_URL:-http://localhost:4000}
+      LANGFUSE_PUBLIC_KEY: pk-lf-story-engine-dev
+      LANGFUSE_SECRET_KEY: sk-lf-story-engine-dev
+      LANGFUSE_HOST: http://langfuse:3000
+      SSLCOMMERZ_STORE_ID: ${SSLCOMMERZ_STORE_ID:-}
+      SSLCOMMERZ_STORE_PASS: ${SSLCOMMERZ_STORE_PASS:-}
+      SSLCOMMERZ_SANDBOX: "false"
+      FRONTEND_URL: https://storyteller.techvigilant.com
+      BACKEND_CORS_ORIGINS: '["https://storyteller.techvigilant.com"]'
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production-please}
+    volumes: []  # No code mount in prod
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --workers 2
+      --loop uvloop
+      --http httptools
+    restart: always
+
+  # ── Override: Story Engine Frontend (prod nginx build) ─────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: prod
+    ports: []  # Served through nginx proxy
+    environment: {}
+    volumes: []
+    command: []  # nginx default CMD
+    depends_on:
+      - backend
+    restart: always
+
+  # ── Nginx Reverse Proxy ────────────────────────────────────────────────────
+  # Single entry point: port 80
+  # Cloudflare Tunnel → nginx:80 → frontend (/) or backend (/api)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/prod.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    restart: always
+
+  # ── Infrastructure overrides ───────────────────────────────────────────────
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    restart: always
+
+  redis:
+    restart: always
+
+  langfuse:
+    environment:
+      NEXTAUTH_URL: https://storyteller.techvigilant.com/langfuse
+    restart: always

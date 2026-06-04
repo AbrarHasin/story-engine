@@ -1,0 +1,15 @@
+{
+  "name": "story-engine-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "test:api": "playwright test e2e/api.spec.ts --reporter=list",
+    "test:frontend": "playwright test e2e/frontend.spec.ts --reporter=list",
+    "test:langfuse": "playwright test e2e/langfuse.spec.ts --reporter=list",
+    "test:e2e": "playwright test --reporter=list",
+    "test:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

@@ -1,0 +1,103 @@
+# Story Engine — Project Instructions
+
+## What This Is
+Multi-agent AI story generation platform. Topic → LangGraph pipeline → SSE-streamed story.
+
+## Architecture
+```
+Frontend (React+Vite :5173)
+  → Backend (FastAPI :8080)
+    → LangGraph StateGraph
+      → Supervisor (Haiku, cheap)
+        → [Research, LightSide, DarkSide, Facts] (Haiku, parallel)
+        → Writer (Sonnet)
+        → Synthesizer (Sonnet)
+      ← SSE stream back to client
+  → Langfuse (self-hosted :3000) — full trace per story
+```
+
+## Running Services
+```bash
+curl -s http://localhost:8080/health   # backend health
+curl -s http://localhost:5173          # frontend
+curl -s http://localhost:3000          # langfuse
+```
+
+## Common Tasks
+
+### Start backend (if not running)
+```bash
+cd /home/abrar/code/story-engine/backend
+setsid .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload > /tmp/backend.log 2>&1 &
+```
+
+### Start frontend (if not running)
+```bash
+cd /home/abrar/code/story-engine/frontend
+setsid npm run dev -- --host > /tmp/frontend.log 2>&1 &
+```
+
+### Run database migration
+```bash
+cd /home/abrar/code/story-engine/backend
+.venv/bin/python -m alembic upgrade head
+```
+
+### Run all Playwright tests
+```bash
+cd /home/abrar/code/story-engine
+./node_modules/.bin/playwright test --reporter=list
+```
+
+### Run specific test suites
+```bash
+./node_modules/.bin/playwright test e2e/api.spec.ts       # API + health + SSE
+./node_modules/.bin/playwright test e2e/frontend.spec.ts  # Browser UI automation
+./node_modules/.bin/playwright test e2e/langfuse.spec.ts  # Observability checks
+```
+
+### Check Langfuse traces
+Open: http://localhost:3000/project/story-engine/traces
+Login: dev@storyengine.local / changeme123
+
+### Quick story generation test
+```bash
+cd /home/abrar/code/story-engine/backend
+.venv/bin/python test_generate.py
+```
+
+## Key Files
+| File | Purpose |
+|---|---|
+| `backend/app/agents/graph.py` | LangGraph topology (8 nodes) |
+| `backend/app/agents/nodes.py` | All agent logic + token accounting |
+| `backend/app/api/v1/stories.py` | SSE endpoint + DB persistence |
+| `backend/app/core/auth.py` | JWT auth + dev fallback |
+| `backend/app/core/observability.py` | Langfuse callback handler |
+| `frontend/src/hooks/useGenerate.ts` | SSE consumer (fetch-based) |
+| `frontend/src/stores/generationStore.ts` | Zustand state |
+| `e2e/api.spec.ts` | API-level tests |
+| `e2e/frontend.spec.ts` | Browser E2E tests |
+| `e2e/langfuse.spec.ts` | Trace verification |
+
+## Environment Variables (backend/.env)
+```
+ANTHROPIC_API_KEY=...            # ← needed for generation
+LANGFUSE_PUBLIC_KEY=pk-lf-story-engine-dev
+LANGFUSE_SECRET_KEY=sk-lf-story-engine-dev
+LANGFUSE_HOST=http://localhost:3000
+DATABASE_URL=postgresql+asyncpg://storyengine:changeme@localhost:5432/storyengine
+REDIS_URL=redis://localhost:6379
+```
+
+## Model Tiers (token cost discipline)
+- Haiku 4.5 → supervisor, research, light, dark, facts (~$0.001/node)
+- Sonnet 4.6 → writer, synthesizer (~$0.05–0.15/call)
+- Target cost per story: ~$0.19 with caching
+
+## Dev Constraints
+- `backend/.env` is gitignored — never commit it
+- `password_hash` column added in migration 0002
+- Dev user ID: 00000000-0000-0000-0000-000000000001 (seeded via seed_dev_user.py)
+- Auth fallback: no JWT token + default JWT_SECRET_KEY → auto-uses dev user
+- Docker builds work now (`.dockerignore` excludes .venv/node_modules)

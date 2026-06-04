@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface-2: #263347;
+    --border: #334155;
+    --text: #f1f5f9;
+    --text-muted: #94a3b8;
+  }
+
+  body {
+    @apply bg-slate-900 text-slate-100 antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  * { @apply border-slate-700; }
+}
+
+@layer components {
+  .card {
+    @apply bg-slate-800 border border-slate-700 rounded-xl p-4;
+  }
+
+  .btn-primary {
+    @apply bg-sky-600 hover:bg-sky-500 text-white font-semibold px-4 py-2 rounded-lg
+           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply text-slate-400 hover:text-slate-100 hover:bg-slate-700 px-3 py-1.5 rounded-lg transition-colors;
+  }
+
+  .input {
+    @apply bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-slate-100
+           placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500
+           focus:border-transparent w-full;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-slate-300 mb-1.5;
+  }
+
+  .streaming-panel {
+    @apply card min-h-[160px] relative overflow-hidden;
+  }
+
+  .token-badge {
+    @apply text-xs font-mono text-slate-400 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded-full;
+  }
+}
+
+/* SSE streaming cursor blink */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+.streaming-cursor::after {
+  content: '▋';
+  @apply text-sky-400;
+  animation: blink 0.8s step-end infinite;
+}

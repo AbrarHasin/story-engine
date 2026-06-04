@@ -1,0 +1,36 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "mcp-server-filesystem",
+      "args": ["/home/abrar/code/story-engine"]
+    },
+    "memory": {
+      "command": "mcp-server-memory"
+    },
+    "sequential-thinking": {
+      "command": "mcp-server-sequential-thinking"
+    },
+    "playwright": {
+      "command": "playwright-mcp",
+      "args": [
+        "--headless",
+        "--browser", "chromium"
+      ]
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/abrar/code/story-engine/.claude/hooks/check_services.py"
+          }
+        ]
+      }
+    ]
+  },
+  "alwaysThinkingEnabled": true,
+  "theme": "dark"
+}
