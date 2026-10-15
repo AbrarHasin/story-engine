@@ -197,7 +197,7 @@ leaves a final snapshot (`DeletionPolicy: Snapshot`); deletion protection is on.
 | `MODEL_ROUTER`, `MODEL_WRITER`, `MODEL_SYNTHESIZER` | parameters `ModelRouter`, `ModelWriter`, `ModelSynthesizer`, default `claude-haiku-5-5` | per-role model ids |
 | `DB_BACKEND` | `dataapi` | use the Data API adapter; no `DATABASE_URL` |
 | `DATAAPI_RESOURCE_ARN`, `DATAAPI_SECRET_ARN`, `DATAAPI_DATABASE`, `DATAAPI_RESUME_TIMEOUT_SECONDS` | from the stack, `storyengine`, `45` | Data API target (names as in `backend/.env.lambda.example`) |
-| `SSM_PARAMETER_PATH` | `/story-engine/prod/` | load SecureStrings into Settings at cold start |
+| `SSM_PARAMETER_PATH` | `/story-engine/prod/` | `app.core.ssm` loads every SecureString directly under it (GetParametersByPath, WithDecryption, paginated) before Settings is validated; the last name segment is the setting. A same-named env var wins. Secrets are never Lambda env vars. Read failure fails the cold start; the prod guard runs after loading |
 | `CHECKPOINTER` | `none` | no Redis |
 | `RUN_DEADLINE_SECONDS` | `600` | app deadline under the 900 s Lambda timeout |
 | `FRONTEND_URL`, `BACKEND_PUBLIC_URL`, `BACKEND_CORS_ORIGINS` | site / api URLs | CORS and payment callbacks |
@@ -211,10 +211,10 @@ target `migrate` (AWS Lambda Python base image, no Web Adapter), handler
 
 Migrate handler (`app.migrate.handler`): runs `alembic upgrade head` over the Data API;
 `{"action": "current"}` reports the applied revision. As the CodeDeploy PreTraffic hook it
-must also report `Succeeded` or `Failed` with `codedeploy:PutLifecycleEventHookExecutionStatus`
-when the event has `DeploymentId` and `LifecycleEventHookExecutionId`. **The handler on
-`aws-app` (afc2db3) does not do this yet**: until it does, a deploy waits for the hook to
-time out and rolls back. A manual invoke works today.
+reports `Succeeded` or `Failed` with `codedeploy:PutLifecycleEventHookExecutionStatus` when
+the event has `DeploymentId` and `LifecycleEventHookExecutionId` (always migrates to head;
+`Failed` on any exception, after logging it). A manual invoke (`{"revision": "head"}`) does
+not call CodeDeploy and raises on error.
 
 ## 10. Monitoring
 

@@ -90,6 +90,27 @@ def test_env_matches_app_contract(app):
         assert "DATABASE_URL" not in env
 
 
+def test_ssm_and_codedeploy_permissions(app):
+    for fn in ("StoryApiFunction", "MigrateFunction"):
+        p = app[fn]["Properties"]
+        assert p["Environment"]["Variables"]["SSM_PARAMETER_PATH"] == {
+            "Fn::Sub": "/story-engine/${Stage}/"}
+        for secret in ("ANTHROPIC_API_KEY", "JWT_SECRET_KEY", "SSLCOMMERZ_STORE_ID",
+                       "SSLCOMMERZ_STORE_PASS"):
+            assert secret not in p["Environment"]["Variables"]  # SSM only, never env
+        stmts = [st for pol in p["Policies"] if "Statement" in pol for st in pol["Statement"]]
+        ssm_st = next(st for st in stmts if "ssm:GetParametersByPath" in st["Action"])
+        res = {r["Fn::Sub"] for r in ssm_st["Resource"]}
+        assert any(r.endswith(":parameter/story-engine/${Stage}") for r in res)  # the path
+        assert any(r.endswith(":parameter/story-engine/${Stage}/*") for r in res)
+        kms = next(st for st in stmts if st["Action"] == "kms:Decrypt")
+        assert kms["Condition"]["StringEquals"]["kms:ViaService"] == {
+            "Fn::Sub": "ssm.${AWS::Region}.amazonaws.com"}
+    mig = [st for pol in app["MigrateFunction"]["Properties"]["Policies"] if "Statement" in pol
+           for st in pol["Statement"]]
+    assert any(st["Action"] == "codedeploy:PutLifecycleEventHookExecutionStatus" for st in mig)
+
+
 def test_llm_parameters_and_bedrock_off_by_default():
     t = load("template.yaml")
     params = t["Parameters"]

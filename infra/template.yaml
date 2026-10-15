@@ -230,7 +230,10 @@ Resources:
               Resource: !GetAtt AuroraCluster.MasterUserSecret.SecretArn
             - Effect: Allow
               Action: [ssm:GetParametersByPath, ssm:GetParameters, ssm:GetParameter]
-              Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}/*'
+              # GetParametersByPath is authorized on the path itself, Get* on the names under it.
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}'
+                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}/*'
             # SecureStrings use the AWS-managed aws/ssm key; decrypt only via SSM.
             - Effect: Allow
               Action: kms:Decrypt
@@ -296,7 +299,10 @@ Resources:
               Resource: !GetAtt AuroraCluster.MasterUserSecret.SecretArn
             - Effect: Allow
               Action: [ssm:GetParametersByPath, ssm:GetParameters, ssm:GetParameter]
-              Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}/*'
+              # GetParametersByPath is authorized on the path itself, Get* on the names under it.
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}'
+                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}/*'
             - Effect: Allow
               Action: kms:Decrypt
               Resource: !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*'
