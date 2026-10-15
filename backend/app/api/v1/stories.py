@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from app.cache.semantic import with_semantic_cache
 from app.core.database import get_db
 from app.core.observability import get_langfuse_callback
 from app.core.auth import get_current_user
@@ -247,7 +248,7 @@ async def generate_story(
     await db.commit()
 
     return StreamingResponse(
-        _stream_generation(story.id, request, personality_prompt, db),
+        with_semantic_cache(story.id, request, personality_prompt, db, _stream_generation),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
