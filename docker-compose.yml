@@ -167,12 +167,19 @@ services:
 
   backend:
     build: ./backend
+    models:
+      gemma:
+        # Docker Model Runner injects the OpenAI-compatible endpoint + model id
+        endpoint_var: LOCAL_LLM_BASE_URL
+        model_var: LOCAL_LLM_MODEL
     ports:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://storyengine:changeme@postgres:5432/storyengine
       REDIS_URL: redis://redis:6379
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # LLM provider: "local" = Docker Model Runner (gemma4), "anthropic" = Claude API
+      LLM_PROVIDER: ${LLM_PROVIDER:-local}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LITELLM_BASE_URL: ${LITELLM_BASE_URL:-http://localhost:4000}
       LANGFUSE_PUBLIC_KEY: pk-lf-story-engine-dev
       LANGFUSE_SECRET_KEY: sk-lf-story-engine-dev
@@ -206,6 +213,13 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+# ── Local LLM: Docker Model Runner (requires Docker Desktop 4.41+ / DMR enabled)
+models:
+  gemma:
+    # Gemma 3 4B — text-only, no multimodal projector issues
+    model: ai/gemma3:4B
+    context_size: 8192
 
 volumes:
   postgres_data:
