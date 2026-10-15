@@ -20,6 +20,7 @@ from sqlalchemy import select
 from app.core.database import get_db
 from app.core.observability import get_langfuse_callback
 from app.core.auth import get_current_user
+from app.core.limits import enforce_quota, enforce_rate_limit, record_completion
 from app.models.schemas import StoryGenerateRequest, StoryResponse
 from app.models.db import Story, StoryStatus, Personality, User
 from app.agents.graph import get_compiled_graph, get_redis_checkpointer
@@ -167,6 +168,7 @@ async def _stream_generation(
         story.langgraph_run_id = run_id
         story.completed_at  = datetime.utcnow()
         await db.commit()
+        await record_completion(db, story.user_id, total_input + total_output)
 
     yield _sse("done", {
         "story_id": str(story_id),
@@ -215,10 +217,15 @@ async def generate_story(
     es.addEventListener('node_complete', e => console.log(JSON.parse(e.data)));
     ```
     """
-    # Resolve personality
+    await enforce_rate_limit(user.id)
+    enforce_quota(user)
+
+    # Resolve personality (owner-scoped: 404 for unknown or foreign ids, no existence leak)
     personality_prompt: str | None = None
     if request.personality_id:
         p = await db.get(Personality, request.personality_id)
+        if p is None or p.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Personality not found")
         if p:
             parts = []
             if p.voice:

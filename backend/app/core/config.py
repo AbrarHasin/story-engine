@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     MODEL_SYNTHESIZER: str = "claude-sonnet-4-6"         # synthesizer/editor
     MODEL_PREMIUM: str = "claude-opus-4-6"               # premium plan only
 
+    # Quotas and rate limits (issue #9). Plan limit = completed stories per month; 0 = unlimited.
+    PLAN_LIMIT_FREE: int = 10
+    PLAN_LIMIT_PRO: int = 200
+    PLAN_LIMIT_ENTERPRISE: int = 0
+    RATE_LIMIT_PER_MINUTE: int = 5   # generate calls per user per minute; 0 disables
+
     # Token limits per node
     MAX_TOKENS_RESEARCH: int = 300
     MAX_TOKENS_LIGHT: int = 250
