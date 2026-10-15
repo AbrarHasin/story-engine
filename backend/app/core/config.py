@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     LOCAL_LLM_API_KEY: str = "docker"  # DMR ignores the key; client requires one
     LOCAL_LLM_TIMEOUT_SECONDS: int = 300  # local inference can be slow on CPU
 
+    # LLM resilience — applied to every model call, both providers.
+    # Retries use the provider SDK's exponential backoff with jitter.
+    LLM_TIMEOUT_SECONDS: float = 60.0  # per request (local uses LOCAL_LLM_TIMEOUT_SECONDS)
+    LLM_MAX_RETRIES: int = 2           # retries after the first attempt
+
     # LLM — Claude API
     ANTHROPIC_API_KEY: str = ""
     LITELLM_BASE_URL: str = "http://localhost:4000"

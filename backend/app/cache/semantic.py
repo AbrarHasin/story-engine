@@ -22,6 +22,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import SessionLocal
 from app.models.db import Story, StoryStatus
 from app.models.schemas import StoryGenerateRequest
 
@@ -97,23 +98,28 @@ def _bullets(text: str | None) -> list[str]:
 
 
 async def _replay(
-    db: AsyncSession, story_id: uuid.UUID, src: Story, similarity: float
+    story_id: uuid.UUID, src: Story, similarity: float
 ) -> AsyncGenerator[str, None]:
-    """Copy `src` into the new story row and emit the standard SSE sequence."""
+    """Copy `src` into the new story row and emit the standard SSE sequence.
+
+    Opens its own session: the request-scoped one is closed once the handler returns.
+    """
     run_id = str(uuid.uuid4())
-    story = await db.get(Story, story_id)
-    if story is not None:
-        story.status = StoryStatus.completed
-        story.light_side = src.light_side
-        story.dark_side = src.dark_side
-        story.facts = src.facts
-        story.narrative = src.narrative
-        story.final_output = src.final_output
-        story.tokens_input = 0
-        story.tokens_output = 0
-        story.cost_usd = 0.0
-        story.completed_at = datetime.utcnow()
-        await db.commit()
+    async with SessionLocal() as db:
+        story = await db.get(Story, story_id)
+        if story is not None:
+            story.status = StoryStatus.completed
+            story.research = src.research
+            story.light_side = src.light_side
+            story.dark_side = src.dark_side
+            story.facts = src.facts
+            story.narrative = src.narrative
+            story.final_output = src.final_output
+            story.tokens_input = 0
+            story.tokens_output = 0
+            story.cost_usd = 0.0
+            story.completed_at = datetime.utcnow()
+            await db.commit()
 
     yield _sse("start", {
         "story_id": str(story_id), "run_id": run_id,
@@ -152,14 +158,17 @@ async def with_semantic_cache(
         vec = await embed_text(cache_text(
             request.topic, request.tonality, request.audience, request.length, personality_prompt,
         ))
-        hit = await find_cached(db, vec, request.locale, settings.SEMANTIC_CACHE_THRESHOLD)
+        async with SessionLocal() as session:
+            hit = await find_cached(
+                session, vec, request.locale, settings.SEMANTIC_CACHE_THRESHOLD
+            )
     except Exception:
         logger.exception("Semantic cache lookup failed; generating normally")
         hit = None
 
     if hit is not None:
         src, similarity = hit
-        async for chunk in _replay(db, story_id, src, similarity):
+        async for chunk in _replay(story_id, src, similarity):
             yield chunk
         return
 
@@ -171,6 +180,7 @@ async def with_semantic_cache(
 
     if completed and vec is not None:
         try:
-            await store_embedding(db, story_id, vec)
+            async with SessionLocal() as session:
+                await store_embedding(session, story_id, vec)
         except Exception:
             logger.exception("Could not store embedding for story %s", story_id)
