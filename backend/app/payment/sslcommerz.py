@@ -4,6 +4,7 @@ Docs: https://sslcommerz.com/integration-document/
 Sandbox: https://developer.sslcommerz.com
 """
 import hashlib
+import hmac
 import uuid
 import aiohttp
 import logging
@@ -12,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from app.core.auth import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.db import Payment, PaymentStatus, PlanTier, User
@@ -22,12 +24,54 @@ logger = logging.getLogger(__name__)
 
 SSLCOMMERZ_SANDBOX_URL = "https://sandbox.sslcommerz.com/gwprocess/v4/api.php"
 SSLCOMMERZ_LIVE_URL    = "https://securepay.sslcommerz.com/gwprocess/v4/api.php"
-
-DEV_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+SSLCOMMERZ_SANDBOX_VALIDATE_URL = "https://sandbox.sslcommerz.com/validator/api/validationserverAPI.php"
+SSLCOMMERZ_LIVE_VALIDATE_URL    = "https://securepay.sslcommerz.com/validator/api/validationserverAPI.php"
 
 
 def _gateway_url() -> str:
     return SSLCOMMERZ_SANDBOX_URL if settings.SSLCOMMERZ_SANDBOX else SSLCOMMERZ_LIVE_URL
+
+
+def _validate_url() -> str:
+    return SSLCOMMERZ_SANDBOX_VALIDATE_URL if settings.SSLCOMMERZ_SANDBOX else SSLCOMMERZ_LIVE_VALIDATE_URL
+
+
+async def _create_gateway_session(payload: dict) -> dict:
+    async with aiohttp.ClientSession() as session:
+        async with session.post(_gateway_url(), data=payload) as resp:
+            return await resp.json(content_type=None)
+
+
+async def _validate_with_gateway(val_id: str) -> dict:
+    """Ask SSLCommerz to confirm a val_id (server-to-server)."""
+    params = {
+        "val_id":       val_id,
+        "store_id":     settings.SSLCOMMERZ_STORE_ID,
+        "store_passwd": settings.SSLCOMMERZ_STORE_PASS,
+        "format":       "json",
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.get(_validate_url(), params=params) as resp:
+            return await resp.json(content_type=None)
+
+
+def _signature_valid(data: dict) -> bool:
+    """Verify the IPN verify_sign (MD5 over the fields named in verify_key)."""
+    verify_sign = data.get("verify_sign")
+    verify_key = data.get("verify_key")
+    if not verify_sign or not verify_key or not settings.SSLCOMMERZ_STORE_PASS:
+        return False
+    params = {}
+    for k in str(verify_key).split(","):
+        if k == "store_passwd":
+            params[k] = hashlib.md5(settings.SSLCOMMERZ_STORE_PASS.encode()).hexdigest()
+        elif k in data:
+            params[k] = data[k]
+        else:
+            return False
+    signed = "&".join(f"{k}={params[k]}" for k in sorted(params))
+    expected = hashlib.md5(signed.encode()).hexdigest()
+    return hmac.compare_digest(expected, str(verify_sign).lower())
 
 
 @router.post(
@@ -38,6 +82,7 @@ def _gateway_url() -> str:
 async def initiate_payment(
     body: PaymentInitiateRequest,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """
     Create a payment session with SSLCommerz and return the payment URL.
@@ -52,7 +97,7 @@ async def initiate_payment(
 
     amount = PLAN_PRICES_BDT[body.plan]
     tran_id = f"SE-{uuid.uuid4().hex[:16].upper()}"
-    backend_base = settings.FRONTEND_URL.replace("5173", "8000")  # crude, improve with setting
+    backend_base = settings.BACKEND_PUBLIC_URL.rstrip("/")
 
     payload = {
         "store_id":       settings.SSLCOMMERZ_STORE_ID,
@@ -67,13 +112,13 @@ async def initiate_payment(
         "product_name":   f"Story Engine {body.plan.value.title()} Plan",
         "product_category": "subscription",
         "product_profile": "general",
-        "cus_name":       "Story Engine User",
-        "cus_email":      "user@example.com",
+        "cus_name":       user.name or "Story Engine User",
+        "cus_email":      user.email,
         "cus_add1":       "Dhaka",
         "cus_city":       "Dhaka",
         "cus_country":    "Bangladesh",
         "cus_phone":      "01700000000",
-        "ship_name":      "Story Engine User",
+        "ship_name":      user.name or "Story Engine User",
         "ship_add1":      "Dhaka",
         "ship_city":      "Dhaka",
         "ship_country":   "Bangladesh",
@@ -84,7 +129,7 @@ async def initiate_payment(
 
     # Record payment initiation in DB
     payment = Payment(
-        user_id=DEV_USER_ID,
+        user_id=user.id,
         tran_id=tran_id,
         amount=amount,
         plan=body.plan,
@@ -93,9 +138,7 @@ async def initiate_payment(
     db.add(payment)
     await db.commit()
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(_gateway_url(), data=payload) as resp:
-            data = await resp.json(content_type=None)
+    data = await _create_gateway_session(payload)
 
     if data.get("status") != "SUCCESS":
         raise HTTPException(502, f"SSLCommerz error: {data.get('failedreason', 'unknown')}")
@@ -111,40 +154,48 @@ async def initiate_payment(
 async def payment_ipn(request: Request, db: AsyncSession = Depends(get_db)):
     """
     Receives async payment notification from SSLCommerz.
-    Validates MD5 hash, then upgrades user plan.
+    Requires a valid MD5 signature, confirms with the gateway validation API,
+    then upgrades the user plan. CONFIRMED is terminal.
     """
     form = await request.form()
-    data = dict(form)
+    data = {k: str(v) for k, v in form.items()}
 
-    tran_id   = data.get("tran_id")
-    val_id    = data.get("val_id")
-    status    = data.get("status")
-    amount    = float(str(data.get("amount", 0)))
-    verify_key= data.get("verify_sign")
-    verify_str= data.get("verify_key")
+    tran_id = data.get("tran_id")
+    val_id  = data.get("val_id")
+    status  = data.get("status")
 
-    # Validate MD5 signature
-    if verify_key and verify_str:
-        params = {k: v for k, v in data.items() if k not in ("verify_sign", "verify_sign_sha2")}
-        params["store_passwd"] = hashlib.md5(settings.SSLCOMMERZ_STORE_PASS.encode()).hexdigest()
-        sorted_str = "&".join(f"{k}={params[k]}" for k in sorted(params))
-        expected = hashlib.md5(sorted_str.encode()).hexdigest()
-        if expected != verify_key:
-            logger.warning("IPN signature mismatch for tran_id=%s", tran_id)
-            raise HTTPException(400, "Signature mismatch")
+    if not _signature_valid(data):
+        logger.warning("IPN signature missing or mismatched for tran_id=%s", tran_id)
+        raise HTTPException(400, "Invalid signature")
 
     result = await db.execute(select(Payment).where(Payment.tran_id == tran_id))
     payment = result.scalar_one_or_none()
     if not payment:
         raise HTTPException(404, "Payment not found")
 
-    if status == "VALID" and abs(amount - payment.amount) < 1:
+    # CONFIRMED is terminal: later IPNs (duplicates, late FAILED) change nothing.
+    if payment.status == PaymentStatus.confirmed:
+        return {"status": "received"}
+
+    confirmed = False
+    if status in ("VALID", "VALIDATED") and val_id:
+        v = await _validate_with_gateway(val_id)
+        try:
+            confirmed = (
+                v.get("status") in ("VALID", "VALIDATED")
+                and v.get("tran_id") == payment.tran_id
+                and v.get("currency", "BDT") == "BDT"
+                and abs(float(v.get("amount", 0)) - payment.amount) < 1
+            )
+        except (TypeError, ValueError):
+            confirmed = False
+
+    if confirmed:
         payment.status       = PaymentStatus.confirmed
-        payment.val_id       = str(val_id) if val_id else None
+        payment.val_id       = str(val_id)
         payment.ipn_payload  = data
         payment.confirmed_at = datetime.utcnow()
 
-        # Upgrade user plan
         user = await db.get(User, payment.user_id)
         if user:
             user.plan = payment.plan
@@ -156,7 +207,6 @@ async def payment_ipn(request: Request, db: AsyncSession = Depends(get_db)):
         await db.commit()
 
     return {"status": "received"}
-
 
 @router.get("/success", summary="SSLCommerz success redirect")
 async def payment_success(tran_id: str):
