@@ -53,3 +53,6 @@ playwright-report/
 # Claude Code local/machine-specific files
 .claude/settings.local.json
 .claude/CLAUDE.md
+
+# Playwright screenshots (regenerated every e2e run)
+e2e/screenshots/
