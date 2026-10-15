@@ -11,6 +11,14 @@ from app.models.schemas import PersonalityCreate, PersonalityUpdate, Personality
 router = APIRouter(prefix="/personalities", tags=["Personalities"])
 
 
+async def _get_owned(db: AsyncSession, pid: uuid.UUID, user: User) -> Personality | None:
+    """Return the personality only if it belongs to `user`; callers 404 on None."""
+    p = await db.get(Personality, pid)
+    if p is None or p.user_id != user.id:
+        return None
+    return p
+
+
 @router.post("/", response_model=PersonalityResponse, status_code=201, summary="Create personality")
 async def create_personality(
     body: PersonalityCreate,
@@ -36,16 +44,25 @@ async def list_personalities(
 
 
 @router.get("/{pid}", response_model=PersonalityResponse, summary="Get personality")
-async def get_personality(pid: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    p = await db.get(Personality, pid)
+async def get_personality(
+    pid: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    p = await _get_owned(db, pid, user)
     if not p:
         raise HTTPException(404, "Personality not found")
     return p
 
 
 @router.put("/{pid}", response_model=PersonalityResponse, summary="Update personality")
-async def update_personality(pid: uuid.UUID, body: PersonalityUpdate, db: AsyncSession = Depends(get_db)):
-    p = await db.get(Personality, pid)
+async def update_personality(
+    pid: uuid.UUID,
+    body: PersonalityUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    p = await _get_owned(db, pid, user)
     if not p:
         raise HTTPException(404, "Personality not found")
     for k, v in body.model_dump(exclude_none=True).items():
@@ -56,8 +73,12 @@ async def update_personality(pid: uuid.UUID, body: PersonalityUpdate, db: AsyncS
 
 
 @router.delete("/{pid}", status_code=204, summary="Delete personality")
-async def delete_personality(pid: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    p = await db.get(Personality, pid)
+async def delete_personality(
+    pid: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    p = await _get_owned(db, pid, user)
     if not p:
         raise HTTPException(404, "Personality not found")
     await db.delete(p)
