@@ -70,7 +70,8 @@ def test_anthropic_role_models_and_cost():
     assert a.model_name("writer") == settings.MODEL_WRITER
     assert a.model_name("unknown-role") == settings.MODEL_WRITER
     # 1M in + 1M out at writer rates (3 + 15)
-    assert a.cost_usd(settings.MODEL_WRITER, 1_000_000, 1_000_000) == pytest.approx(18.0)
+    assert a.cost_usd(settings.MODEL_SYNTHESIZER, 1_000_000, 1_000_000) == pytest.approx(12.0)
+    assert a.cost_usd(settings.MODEL_WRITER, 1_000_000, 1_000_000) == pytest.approx(0.60)
 
 
 def test_extract_usage_standard_metadata():
@@ -95,7 +96,7 @@ def test_extract_usage_anthropic_fallback_costs():
     )
     u = extract_usage(resp, settings.MODEL_ROUTER, AnthropicAdapter())
     assert u["input_tokens"] == 1_000_000
-    assert u["cost_usd"] == pytest.approx(1.0)
+    assert u["cost_usd"] == pytest.approx(0.10)
 
 
 def test_extract_usage_missing_metadata():
