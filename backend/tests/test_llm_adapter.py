@@ -70,7 +70,8 @@ def test_anthropic_role_models_and_cost():
     assert a.model_name("writer") == settings.MODEL_WRITER
     assert a.model_name("unknown-role") == settings.MODEL_WRITER
     # 1M in + 1M out at writer rates (3 + 15)
-    assert a.cost_usd(settings.MODEL_WRITER, 1_000_000, 1_000_000) == pytest.approx(12.0)
+    assert a.cost_usd(settings.MODEL_SYNTHESIZER, 1_000_000, 1_000_000) == pytest.approx(12.0)
+    assert a.cost_usd(settings.MODEL_WRITER, 1_000_000, 1_000_000) == pytest.approx(0.60)
 
 
 def test_extract_usage_standard_metadata():
