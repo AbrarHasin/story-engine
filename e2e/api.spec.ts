@@ -122,6 +122,7 @@ test('create and fetch personality', async ({ request }) => {
 
 test('generate story via SSE stream', async ({ request }) => {
   test.skip(!authToken, 'requires auth token from login test');
+  test.setTimeout(900_000); // local-model inference (LLM_PROVIDER=local) is slow on CPU
   console.log('Starting SSE story generation...');
   const startTime = Date.now();
 
@@ -141,7 +142,7 @@ test('generate story via SSE stream', async ({ request }) => {
       include_dark: true,
       include_facts: true,
     },
-    timeout: 90_000,
+    timeout: 880_000,
   });
 
   expect(resp.status()).toBe(200);
