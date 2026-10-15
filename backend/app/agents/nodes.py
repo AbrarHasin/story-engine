@@ -9,13 +9,15 @@ Token-optimisation notes:
 """
 import json
 import logging
+import re
 from typing import Any
 
-from langchain_anthropic import ChatAnthropic
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.agents.state import StoryState, TokenUsage
 from app.core.config import settings
+from app.llm import get_adapter, extract_usage
 from app.core.observability import get_langfuse
 
 logger = logging.getLogger(__name__)
@@ -23,45 +25,32 @@ logger = logging.getLogger(__name__)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _count_cost(model: str, in_tok: int, out_tok: int) -> float:
-    """Approximate cost in USD based on June 2026 pricing."""
-    rates = {
-        settings.MODEL_ROUTER:      (1.00, 5.00),
-        settings.MODEL_WRITER:      (3.00, 15.00),
-        settings.MODEL_SYNTHESIZER: (3.00, 15.00),
-        settings.MODEL_PREMIUM:     (5.00, 25.00),
-    }
-    in_rate, out_rate = rates.get(model, (3.00, 15.00))
-    return (in_tok * in_rate + out_tok * out_rate) / 1_000_000
+def _llm(role: str, max_tokens: int, temperature: float = 0.3) -> BaseChatModel:
+    """Provider-agnostic chat model — Claude API or local Docker model,
+    depending on LLM_PROVIDER (see app.llm.adapter)."""
+    return get_adapter().chat(role, max_tokens=max_tokens, temperature=temperature)
 
 
-def _haiku(max_tokens: int) -> ChatAnthropic:
-    return ChatAnthropic(
-        model=settings.MODEL_ROUTER,
-        api_key=settings.ANTHROPIC_API_KEY,
-        max_tokens=max_tokens,
-        temperature=0.3,
-    )
+def _usage(response: Any, role: str) -> TokenUsage:
+    adapter = get_adapter()
+    return extract_usage(response, adapter.model_name(role), adapter)
 
 
-def _sonnet(max_tokens: int) -> ChatAnthropic:
-    return ChatAnthropic(
-        model=settings.MODEL_WRITER,
-        api_key=settings.ANTHROPIC_API_KEY,
-        max_tokens=max_tokens,
-        temperature=0.7,
-    )
-
-
-def _usage(response: Any, model: str) -> TokenUsage:
-    meta = response.response_metadata or {}
-    in_t  = meta.get("usage", {}).get("input_tokens", 0)
-    out_t = meta.get("usage", {}).get("output_tokens", 0)
-    return TokenUsage(
-        input_tokens=in_t,
-        output_tokens=out_t,
-        cost_usd=_count_cost(model, in_t, out_t),
-    )
+def _json_loads(text: str) -> Any:
+    """Tolerant JSON parse — local models often wrap JSON in ```fences``` or prose."""
+    text = text.strip()
+    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    if fence:
+        text = fence.group(1).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        for open_ch, close_ch in (("[", "]"), ("{", "}")):
+            start = text.find(open_ch)
+            end = text.rfind(close_ch)
+            if start != -1 and end > start:
+                return json.loads(text[start:end + 1])
+        raise
 
 
 def _length_guide(length: str) -> str:
@@ -72,7 +61,7 @@ def _length_guide(length: str) -> str:
 
 async def supervisor_node(state: StoryState) -> dict:
     """Classify complexity and set route. Cheap Haiku call."""
-    llm = _haiku(max_tokens=50)
+    llm = _llm("router", max_tokens=50)
     prompt = (
         f"Topic: {state['topic']}\nAudience: {state['audience']}\n"
         "Reply with JSON only: {\"route\": \"full\"} or {\"route\": \"quick\"}\n"
@@ -80,12 +69,12 @@ async def supervisor_node(state: StoryState) -> dict:
     )
     resp = await llm.ainvoke([HumanMessage(content=prompt)])
     try:
-        data = json.loads(resp.content.strip())
+        data = _json_loads(resp.content)
         route = data.get("route", "full")
     except Exception:
         route = "full"
 
-    return {"route": route, "token_usage": [_usage(resp, settings.MODEL_ROUTER)]}
+    return {"route": route, "token_usage": [_usage(resp, "router")]}
 
 
 # ── Node 2: Personality Injector ──────────────────────────────────────────────
@@ -106,7 +95,7 @@ async def personality_injector_node(state: StoryState) -> dict:
 # ── Node 3: Research Agent (Haiku) ────────────────────────────────────────────
 
 async def research_node(state: StoryState) -> dict:
-    llm = _haiku(max_tokens=settings.MAX_TOKENS_RESEARCH)
+    llm = _llm("router", max_tokens=settings.MAX_TOKENS_RESEARCH)
     system = (
         "You are a precise research assistant. Output ONLY a JSON array of strings. "
         "Each string is one key fact or context point. Max 5 items."
@@ -118,13 +107,13 @@ async def research_node(state: StoryState) -> dict:
     )
     resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
     try:
-        bullets = json.loads(resp.content.strip())
+        bullets = _json_loads(resp.content)
         if not isinstance(bullets, list):
             bullets = [str(bullets)]
     except Exception:
         bullets = [resp.content.strip()]
 
-    return {"research_bullets": bullets, "token_usage": [_usage(resp, settings.MODEL_ROUTER)]}
+    return {"research_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
 
 # ── Node 4: Light Side Agent (Haiku) ──────────────────────────────────────────
@@ -133,7 +122,7 @@ async def light_side_node(state: StoryState) -> dict:
     if not state.get("include_light", True):
         return {"light_bullets": []}
 
-    llm = _haiku(max_tokens=settings.MAX_TOKENS_LIGHT)
+    llm = _llm("router", max_tokens=settings.MAX_TOKENS_LIGHT)
     system = (
         "You find the positive angles of any topic. "
         "Output ONLY a JSON array of 3–5 short optimistic bullet strings."
@@ -145,11 +134,11 @@ async def light_side_node(state: StoryState) -> dict:
     )
     resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
     try:
-        bullets = json.loads(resp.content.strip())
+        bullets = _json_loads(resp.content)
     except Exception:
         bullets = [resp.content.strip()]
 
-    return {"light_bullets": bullets, "token_usage": [_usage(resp, settings.MODEL_ROUTER)]}
+    return {"light_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
 
 # ── Node 5: Dark Side Agent (Haiku) ───────────────────────────────────────────
@@ -158,7 +147,7 @@ async def dark_side_node(state: StoryState) -> dict:
     if not state.get("include_dark", True):
         return {"dark_bullets": []}
 
-    llm = _haiku(max_tokens=settings.MAX_TOKENS_DARK)
+    llm = _llm("router", max_tokens=settings.MAX_TOKENS_DARK)
     system = (
         "You identify risks, downsides and shadows of any topic. "
         "Output ONLY a JSON array of 3–5 short critical bullet strings."
@@ -170,11 +159,11 @@ async def dark_side_node(state: StoryState) -> dict:
     )
     resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
     try:
-        bullets = json.loads(resp.content.strip())
+        bullets = _json_loads(resp.content)
     except Exception:
         bullets = [resp.content.strip()]
 
-    return {"dark_bullets": bullets, "token_usage": [_usage(resp, settings.MODEL_ROUTER)]}
+    return {"dark_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
 
 # ── Node 6: Facts Agent (Haiku) ───────────────────────────────────────────────
@@ -183,7 +172,7 @@ async def facts_node(state: StoryState) -> dict:
     if not state.get("include_facts", True):
         return {"fact_bullets": []}
 
-    llm = _haiku(max_tokens=settings.MAX_TOKENS_FACTS)
+    llm = _llm("router", max_tokens=settings.MAX_TOKENS_FACTS)
     system = (
         "You surface surprising, little-known facts. "
         "Output ONLY a JSON array of 3–5 interesting fact strings."
@@ -194,26 +183,45 @@ async def facts_node(state: StoryState) -> dict:
     )
     resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
     try:
-        bullets = json.loads(resp.content.strip())
+        bullets = _json_loads(resp.content)
     except Exception:
         bullets = [resp.content.strip()]
 
-    return {"fact_bullets": bullets, "token_usage": [_usage(resp, settings.MODEL_ROUTER)]}
+    return {"fact_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
 
 # ── Node 7: Story Writer (Sonnet — only premium-cost node) ───────────────────
 
 async def writer_node(state: StoryState) -> dict:
-    llm = _sonnet(max_tokens=settings.MAX_TOKENS_WRITER)
+    llm = _llm("writer", max_tokens=settings.MAX_TOKENS_WRITER, temperature=0.7)
 
     personality = state.get("personality_prompt") or ""
     length_guide = _length_guide(state["length"])
+    include_light = state.get("include_light", True)
+    include_dark  = state.get("include_dark", True)
+    include_facts = state.get("include_facts", True)
 
-    # Compress sub-agent context before passing to writer (token discipline)
     research = "\n".join(f"• {b}" for b in state.get("research_bullets", []))
     light    = "\n".join(f"• {b}" for b in state.get("light_bullets", []))
     dark     = "\n".join(f"• {b}" for b in state.get("dark_bullets", []))
     facts    = "\n".join(f"• {b}" for b in state.get("fact_bullets", []))
+
+    context_parts = [f"Research context:\n{research}"]
+    if include_light:
+        context_parts.append(f"Light side (pros):\n{light}")
+    if include_dark:
+        context_parts.append(f"Dark side (risks):\n{dark}")
+    if include_facts:
+        context_parts.append(f"Interesting facts:\n{facts}")
+
+    structure_parts = []
+    if include_light:
+        structure_parts.append("## Light Side\n[content]")
+    if include_dark:
+        structure_parts.append("## Dark Side\n[content]")
+    if include_facts:
+        structure_parts.append("## Interesting Facts\n[content]")
+    structure_parts.append("## The Story\n[narrative]")
 
     system = (
         f"You are a master storyteller. Write in {state['tonality']} tone for {state['audience']} audience. "
@@ -222,22 +230,18 @@ async def writer_node(state: StoryState) -> dict:
     )
     human = (
         f"Write a structured story about: \"{state['topic']}\"\n\n"
-        f"Research context:\n{research}\n\n"
-        f"Light side (pros):\n{light}\n\n"
-        f"Dark side (risks):\n{dark}\n\n"
-        f"Interesting facts:\n{facts}\n\n"
-        "Structure your response as:\n"
-        "## Light Side\n[content]\n\n## Dark Side\n[content]\n\n"
-        "## Interesting Facts\n[content]\n\n## The Story\n[narrative]"
+        + "\n\n".join(context_parts)
+        + "\n\nStructure your response as:\n"
+        + "\n\n".join(structure_parts)
     )
     resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
-    return {"story_draft": resp.content, "token_usage": [_usage(resp, settings.MODEL_WRITER)]}
+    return {"story_draft": resp.content, "token_usage": [_usage(resp, "writer")]}
 
 
 # ── Node 8: Synthesizer / Editor (Sonnet) ────────────────────────────────────
 
 async def synthesizer_node(state: StoryState) -> dict:
-    llm = _sonnet(max_tokens=settings.MAX_TOKENS_SYNTHESIZER)
+    llm = _llm("synthesizer", max_tokens=settings.MAX_TOKENS_SYNTHESIZER, temperature=0.7)
     system = (
         "You are an editor. Polish and tighten the story. "
         "Remove redundancy. Ensure tone is consistent throughout. "
@@ -247,7 +251,7 @@ async def synthesizer_node(state: StoryState) -> dict:
         SystemMessage(content=system),
         HumanMessage(content=state.get("story_draft", "")),
     ])
-    return {"final_output": resp.content, "token_usage": [_usage(resp, settings.MODEL_SYNTHESIZER)]}
+    return {"final_output": resp.content, "token_usage": [_usage(resp, "synthesizer")]}
 
 
 # ── Routing function ──────────────────────────────────────────────────────────

@@ -18,6 +18,7 @@ from app.core.observability import get_langfuse
 from app.api.v1.auth          import router as auth_router
 from app.api.v1.stories      import router as stories_router
 from app.api.v1.personalities import router as personalities_router
+from app.api.v1.llm           import router as llm_router
 from app.payment.sslcommerz  import router as payment_router
 
 logging.basicConfig(level=logging.INFO)
@@ -79,6 +80,7 @@ app.add_middleware(
 app.include_router(auth_router,          prefix="/api/v1")
 app.include_router(stories_router,      prefix="/api/v1")
 app.include_router(personalities_router, prefix="/api/v1")
+app.include_router(llm_router,           prefix="/api/v1")
 app.include_router(payment_router,       prefix="/api/v1")
 
 
