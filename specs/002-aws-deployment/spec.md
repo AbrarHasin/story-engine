@@ -1,12 +1,18 @@
 # Feature Specification: Run Story Engine on AWS
 
 **Feature Branch**: `aws-deployment-plan` (spec id `002-aws-deployment`)
-**Created**: 2026-10-16 | **Revised**: 2026-10-16 (v2, serverless first)
+**Created**: 2026-10-16 | **Revised**: 2026-10-16 (v2, serverless first; v2.1 DNS + edge decided)
 **Status**: Draft - planning only, for the human to judge cost and effort before any build
 **Input**: "Produce a deployment architecture and a Spec Kit plan for running Story Engine on AWS, so the human can judge effort BEFORE any build work." Revision input: "Follow the Doctor-Assist serverless, cost-optimised design (vault `Projects/Doctor-Assistant/Cloud-Architecture.md`, its spec 008) as the primary candidate."
 
 > Narrative record: vault note `Projects/Story-Engine/AWS-Deployment-Architecture.md` with the
-> diagram `Diagrams/AWS-Deployment.excalidraw` (5 views). Research and price sources: [research.md](./research.md).
+> one-page diagram `Diagrams/AWS-Cloud-Architecture.excalidraw` (Doctor-Assist pattern; the older
+> 5-view `Diagrams/AWS-Deployment.excalidraw` is an appendix). Research and price sources: [research.md](./research.md).
+> **Decided 2026-10-16 (human):** D3 DNS = Route 53 public hosted zone `storyteller.techvigilant.com`
+> NS-delegated from Cloudflare's `techvigilant.com` (as Doctor-Assist's `doc.techvigilant.com`), ACM
+> DNS-validated there, no Cloudflare Tunnel or proxy in the request path. No nginx: [OPT-S] edge =
+> API Gateway REST API, response transfer mode `STREAM`, on `api.storyteller.techvigilant.com`;
+> CloudFront + S3 serve only the SPA.
 > Two options are specified: **Option S Serverless (recommended)** and **Option 1 Lean (baseline)**.
 > Requirements marked **[OPT-S]** or **[OPT-1]** apply to one option only. Option 2 Managed (Fargate)
 > is kept in research.md as a cost line only. Open decisions are marked **[DECIDE Dn]**.
@@ -29,7 +35,7 @@ public URL (mocked or real LLM) and check `GET /health` returns `ok`; the SSE st
 1. **Given** the AWS stack is live, **When** a signed-in user generates a story, **Then** the SSE
    events arrive in order and the story row reaches `completed` in the AWS database.
 2. **Given** a node that sends no event for 60 seconds, **When** it runs, **Then** heartbeats keep
-   the stream open and no proxy, CDN or function URL closes it early.
+   the stream open and no proxy, CDN or API Gateway closes it early.
 3. **Given** an SSLCommerz payment, **When** the gateway posts its IPN, **Then** it reaches the
    backend at `BACKEND_PUBLIC_URL`, passes the signature check and server-side validation.
 4. **[OPT-S] Given** the database has been idle and paused, **When** the next user generates a
@@ -70,15 +76,22 @@ generation still produces a Langfuse trace. A budget alarm fires before the mont
 - Anthropic API without credit or unreachable: `/health` stays up; generation returns `error`.
 - Langfuse unreachable: generation still succeeds (constitution IV, degrade to no-op).
 - SSLCommerz IPN retried: payment confirmation stays idempotent.
-- A request that reaches the function URL directly, not through CloudFront: rejected (403).
+- [OPT-S] A request to the default `execute-api` URL instead of the custom domain: rejected
+  (default endpoint disabled).
+- [OPT-S] A burst above the API Gateway stage throttle: 429 from API Gateway, Lambda never invoked.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
 - **FR-001**: The system MUST serve the SPA and the API from AWS under the existing public hostname.
+  [OPT-S] SPA at `storyteller.techvigilant.com` (CloudFront + S3), API at
+  `api.storyteller.techvigilant.com` (API Gateway REST custom domain); both names live in a Route 53
+  hosted zone NS-delegated from Cloudflare, with one ACM certificate DNS-validated in that zone.
+  No nginx, no Cloudflare Tunnel and no Cloudflare proxy on the request path.
 - **FR-002**: Every hop on the API path MUST allow an SSE response of at least 300 seconds.
-  [OPT-S] The backend MUST send an SSE comment at least every 15 seconds (CloudFront waits 30 s per packet).
+  [OPT-S] The API Gateway integration MUST use response transfer mode `STREAM` on a Regional
+  endpoint (15 min max, 5 min idle). The backend MUST send an SSE comment at least every 15 seconds.
 - **FR-003**: Production MUST run with `LLM_PROVIDER=anthropic` (or `bedrock` if D4 chooses it) and
   MUST fail closed at startup on default secrets (`prod_guard`, HAG-17).
 - **FR-004**: Secrets MUST NOT be in git or in the image. [OPT-S] SSM Parameter Store SecureString.
@@ -91,8 +104,9 @@ generation still produces a Langfuse trace. A budget alarm fires before the mont
 - **FR-010**: Every generation MUST still produce a Langfuse trace (D5). [OPT-S] The trace client
   MUST be flushed before the response ends.
 - **FR-011**: The backend MUST use the real client IP behind the proxy for logs and limits.
-- **FR-012**: [OPT-S] The function URL MUST reject requests without the CloudFront origin-verify
-  secret header; the database MUST have no internet-reachable port. [OPT-1] No inbound port (Cloudflare Tunnel).
+- **FR-012**: [OPT-S] The Lambda MUST be reachable only through the API Gateway custom domain (no
+  function URL; default `execute-api` endpoint disabled); stage throttling MUST cap request rate;
+  the database MUST have no internet-reachable port. [OPT-1] No inbound port (Cloudflare Tunnel).
 - **FR-013**: [OPT-S] The per-user rate limit and monthly quota MUST work without Redis
   (Postgres-backed); LangGraph runs stateless.
 - **FR-014**: [OPT-S] A run MUST end (completed or failed, row updated) within 600 s; the quota
@@ -114,7 +128,8 @@ generation still produces a Langfuse trace. A budget alarm fires before the mont
 
 - **SC-001**: All Playwright tests that pass locally pass against the AWS deployment (LLM mocked or real).
 - **SC-002**: Monthly AWS bill at under 1,000 stories/month stays within the chosen option's
-  estimate, LLM tokens excluded: [OPT-S] <= $20 (and <= $5 in a month with no traffic);
+  estimate, LLM tokens excluded: [OPT-S] <= $20 (and <= $5 in a month with no traffic; estimate
+  ~$12.60 and ~$2.00 including the $0.50 Route 53 zone and ~$0.07 API Gateway);
   [OPT-1] <= $60.
 - **SC-003**: LLM cost per story is unchanged by the move (~$0.0073/story with the chosen models).
 - **SC-004**: A deploy from merge to healthy takes <= 15 minutes; a rollback <= 10 minutes.

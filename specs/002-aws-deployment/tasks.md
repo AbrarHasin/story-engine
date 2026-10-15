@@ -34,10 +34,10 @@
 - [ ] T017 [OS] Run deadline 600 s marks the story failed; quota ignores `running` rows older than 15 min (`api/v1/stories.py`, `core/limits.py`)
 - [ ] T018 [OS] SSE `: ping` comment every 15 s while a node runs; Langfuse `flush()` in the stream's `finally` (`api/v1/stories.py`, `core/observability.py`)
 - [ ] T019 [OS] Lambda image: arm64, Lambda Web Adapter, `AWS_LWA_INVOKE_MODE=response_stream`, uvicorn single worker, ONNX MiniLM baked in, lazy load (`backend/Dockerfile.lambda`, `cache/semantic.py`)
-- [ ] T020 [OS] Lambda function 2048 MB, timeout 900 s, reserved concurrency (e.g. 20), function URL `RESPONSE_STREAM`, auth NONE (`infra/`)
-- [ ] T021 [OS] Origin guard: reject requests without `X-Origin-Verify`; real client IP from CloudFront headers (`core/origin_guard.py`, `main.py`)
-- [ ] T022 [OS] S3 bucket + CloudFront: `/` -> S3 (OAC, SPA fallback), `/api/*` -> function URL (no cache, all methods, origin header); ACM cert in us-east-1 (`infra/`)
-- [ ] T023 [OS] Cloudflare: ACM validation CNAME, then `storyteller` CNAME -> CloudFront (staging host first)
+- [ ] T020 [OS] Lambda function 2048 MB, timeout 900 s, reserved concurrency (e.g. 20), no function URL; API Gateway REST API (Regional), `ANY /{proxy+}` Lambda proxy with response transfer mode `STREAM`, timeout 900 s, stage throttling, default `execute-api` endpoint disabled; spike first: LWA `response_stream` output accepted by API Gateway (`infra/`)
+- [ ] T021 [OS] Real client IP from the API Gateway request context / `X-Forwarded-For`; CORS allows `https://storyteller.techvigilant.com`; SPA built with `VITE_API_BASE_URL=https://api.storyteller.techvigilant.com` (`main.py`, `core/config.py`, frontend build)
+- [ ] T022 [OS] Route 53 public hosted zone `storyteller.techvigilant.com` ($0.50/month); ACM cert in us-east-1 for `storyteller` + `api.storyteller`, DNS-validated in the zone; S3 bucket + CloudFront (OAC, SPA fallback, SPA only); API Gateway custom domain `api.storyteller` (Regional); alias records apex -> CloudFront, `api` -> API Gateway (`infra/`)
+- [ ] T023 [OS] Cloudflare: at cutover replace the `storyteller` Tunnel record with 4 NS records pointing at the Route 53 zone (as `doc.techvigilant.com`); no Cloudflare proxy or Tunnel left on the path (rehearse on a staging sub-zone first)
 
 ### Option 1 Lean [O1] [P1-P3: 2.5 d]
 
@@ -73,7 +73,7 @@
 ## Phase 7: Polish and cutover [OS rest of 1.5 d / O1 0.5 d]
 
 - [ ] T040 Secret scan of repo, images and CI logs (SC-006)
-- [ ] T041 Cutover: switch DNS, keep the home server read-only for 7 days as fallback
+- [ ] T041 Cutover: [OPT-S] NS-delegate `storyteller` to Route 53 (T023), [OPT-1] switch the Tunnel; keep the home server read-only for 7 days as fallback
 - [ ] T042 Update vault notes (Hub, Architecture, AWS-Deployment-Architecture status) and diagrams
 - [ ] T043 Check the first monthly bill against SC-002; record real ACU-hours
 
