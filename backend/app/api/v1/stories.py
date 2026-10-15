@@ -8,7 +8,6 @@ DELETE /api/v1/stories/{id}     → delete story
 """
 import json
 import uuid
-import asyncio
 import logging
 from datetime import datetime
 from typing import AsyncGenerator
@@ -207,10 +206,14 @@ async def generate_story(
         p = await db.get(Personality, request.personality_id)
         if p:
             parts = []
-            if p.voice:         parts.append(f"Voice: {p.voice}")
-            if p.tone:          parts.append(f"Tone: {p.tone}")
-            if p.reading_level: parts.append(f"Reading level: {p.reading_level}")
-            if p.banned_words:  parts.append(f"Never use these words: {', '.join(p.banned_words)}")
+            if p.voice:
+                parts.append(f"Voice: {p.voice}")
+            if p.tone:
+                parts.append(f"Tone: {p.tone}")
+            if p.reading_level:
+                parts.append(f"Reading level: {p.reading_level}")
+            if p.banned_words:
+                parts.append(f"Never use these words: {', '.join(p.banned_words)}")
             personality_prompt = "\n".join(parts)
 
     # Create pending story record

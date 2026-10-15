@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { CheckCircle2, XCircle, ExternalLink, Server, Database, Cpu, Eye } from 'lucide-react'
 import { clsx } from 'clsx'
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_API_BASE_URL || ''
 const LANGFUSE = import.meta.env.VITE_LANGFUSE_HOST || 'http://localhost:3000'
 
 interface HealthCheck {

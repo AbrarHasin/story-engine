@@ -96,13 +96,21 @@ test('langfuse project exists', async ({ page }) => {
 // ── Trigger generation and verify trace appears ───────────────────────────────
 
 test('story generation creates langfuse trace', async ({ page, request }) => {
+  test.setTimeout(720_000); // local-model inference is slow
   console.log('\n📡 Triggering story generation...');
+
+  // The API requires JWT auth — register a throwaway user
+  const reg = await request.post(`${API}/api/v1/auth/register`, {
+    data: { email: `lf-e2e-${Date.now()}@test.com`, password: 'testpassword123', name: 'LF E2E' },
+  });
+  const lfToken = (await reg.json()).access_token;
 
   // 1. Generate a story via API
   const genResp = await request.post(`${API}/api/v1/stories/generate`, {
     headers: {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
+      Authorization: `Bearer ${lfToken}`,
     },
     data: {
       topic: 'Langfuse trace test — solar power in Bangladesh',
@@ -114,7 +122,7 @@ test('story generation creates langfuse trace', async ({ page, request }) => {
       include_dark: false,
       include_facts: false,
     },
-    timeout: 90_000,
+    timeout: 600_000,
   });
 
   expect(genResp.status()).toBe(200);

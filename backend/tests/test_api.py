@@ -4,12 +4,18 @@ These hit a live DB (no mocks). Start infra first: make up-infra
 """
 import pytest
 from httpx import AsyncClient, ASGITransport
+from app.core.auth import DEV_USER_ID, create_access_token
 from app.main import app
 
 
 @pytest.fixture
-async def client():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+async def client(dev_user):
+    token = create_access_token(DEV_USER_ID, "dev@storyengine.local")
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"Authorization": f"Bearer {token}"},
+    ) as c:
         yield c
 
 

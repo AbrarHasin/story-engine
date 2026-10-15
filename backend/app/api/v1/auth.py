@@ -9,7 +9,7 @@ GET  /api/v1/auth/me        → current user info
 import logging
 from pydantic import BaseModel, EmailStr, Field
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 

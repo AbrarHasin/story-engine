@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 _langfuse_client: Langfuse | None = None
 
 
-def get_langfuse() -> Langfuse:
+def get_langfuse() -> Langfuse | None:
     global _langfuse_client
     if _langfuse_client is None:
         if settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY:
@@ -54,7 +54,7 @@ def get_langfuse_callback(trace_name: str, user_id: str | None = None) -> Callba
     if lf is None:
         return None
     try:
-        return CallbackHandler(
+        return CallbackHandler(  # type: ignore[call-arg]
             trace_name=trace_name,
             user_id=user_id,
         )

@@ -13,6 +13,10 @@ export default defineConfig({
     strictPort: true,
     allowedHosts: true,
     proxy: {
+      '/health': {
+        target: process.env.VITE_API_BASE_URL || 'http://localhost:8080',
+        changeOrigin: true,
+      },
       '/api': {
         target: process.env.VITE_API_BASE_URL || 'http://localhost:8080',
         changeOrigin: true,

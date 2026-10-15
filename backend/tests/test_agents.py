@@ -59,12 +59,12 @@ async def test_research_node_parses_json():
 
     mock_resp = MagicMock()
     mock_resp.content = '["Fact one", "Fact two", "Fact three"]'
-    mock_resp.response_metadata = {"usage": {"input_tokens": 50, "output_tokens": 30}}
+    mock_resp.usage_metadata = {"input_tokens": 50, "output_tokens": 30}
 
-    with patch("app.agents.nodes._haiku") as mock_haiku_cls:
+    with patch("app.agents.nodes._llm") as mock_llm_factory:
         mock_llm = AsyncMock()
         mock_llm.ainvoke.return_value = mock_resp
-        mock_haiku_cls.return_value = mock_llm
+        mock_llm_factory.return_value = mock_llm
 
         result = await research_node(_base_state())
 

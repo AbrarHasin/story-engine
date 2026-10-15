@@ -19,7 +19,18 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
 
-    # LLM
+    # LLM provider selection — "anthropic" (Claude API) or "local" (Docker Model Runner)
+    LLM_PROVIDER: str = "anthropic"
+
+    # LLM — local model via OpenAI-compatible endpoint (Docker Model Runner).
+    # From the host: http://localhost:12434/engines/v1
+    # From a compose service with a `models:` block these are auto-injected.
+    LOCAL_LLM_BASE_URL: str = "http://localhost:12434/engines/v1"
+    LOCAL_LLM_MODEL: str = "ai/gemma3:4B"
+    LOCAL_LLM_API_KEY: str = "docker"  # DMR ignores the key; client requires one
+    LOCAL_LLM_TIMEOUT_SECONDS: int = 300  # local inference can be slow on CPU
+
+    # LLM — Claude API
     ANTHROPIC_API_KEY: str = ""
     LITELLM_BASE_URL: str = "http://localhost:4000"
 

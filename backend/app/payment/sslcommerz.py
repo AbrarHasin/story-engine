@@ -119,8 +119,7 @@ async def payment_ipn(request: Request, db: AsyncSession = Depends(get_db)):
     tran_id   = data.get("tran_id")
     val_id    = data.get("val_id")
     status    = data.get("status")
-    amount    = float(data.get("amount", 0))
-    store_amt = float(data.get("store_amount", 0))
+    amount    = float(str(data.get("amount", 0)))
     verify_key= data.get("verify_sign")
     verify_str= data.get("verify_key")
 
@@ -141,7 +140,7 @@ async def payment_ipn(request: Request, db: AsyncSession = Depends(get_db)):
 
     if status == "VALID" and abs(amount - payment.amount) < 1:
         payment.status       = PaymentStatus.confirmed
-        payment.val_id       = val_id
+        payment.val_id       = str(val_id) if val_id else None
         payment.ipn_payload  = data
         payment.confirmed_at = datetime.utcnow()
 

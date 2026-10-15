@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Clock, CheckCircle2, XCircle, Loader2 } from 'lucide-react'
 import { clsx } from 'clsx'
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_API_BASE_URL || ''
 
 interface Story {
   id: string

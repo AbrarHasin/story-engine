@@ -7,6 +7,19 @@ import { test, expect } from '@playwright/test';
 const FRONTEND = 'http://localhost:5173';
 const API = 'http://localhost:8080';
 
+// The API requires JWT auth but the UI doesn't manage tokens yet — register a
+// throwaway user and inject the Bearer header into every browser API request.
+async function authedPage(page: any, request: any): Promise<string> {
+  const r = await request.post(`${API}/api/v1/auth/register`, {
+    data: { email: `fe-e2e-${Date.now()}@test.com`, password: 'testpassword123', name: 'FE E2E' },
+  });
+  const token = (await r.json()).access_token;
+  await page.route('**/api/v1/**', async (route: any) => {
+    await route.continue({ headers: { ...route.request().headers(), authorization: `Bearer ${token}` } });
+  });
+  return token;
+}
+
 // ── App loads ─────────────────────────────────────────────────────────────────
 
 test('app loads and nav is visible', async ({ page }) => {
@@ -56,7 +69,9 @@ test('tonality and audience chips are clickable', async ({ page }) => {
 
 // ── Story generation flow ─────────────────────────────────────────────────────
 
-test('story generation flow — start to SSE result', async ({ page }) => {
+test('story generation flow — start to SSE result', async ({ page, request }) => {
+  test.setTimeout(720_000); // local-model inference is slow
+  await authedPage(page, request);
   await page.goto(FRONTEND);
   await page.waitForLoadState('networkidle');
 
@@ -102,8 +117,8 @@ test('story generation flow — start to SSE result', async ({ page }) => {
   // Wait for either complete or error (up to full story generation time)
   const completed = page.getByText('Complete').first();
   const result = await Promise.race([
-    completed.waitFor({ timeout: 120_000 }).then(() => 'complete'),
-    errorCard.waitFor({ timeout: 120_000 }).then(() => 'error'),
+    completed.waitFor({ timeout: 600_000 }).then(() => 'complete'),
+    errorCard.waitFor({ timeout: 600_000 }).then(() => 'error'),
   ]);
 
   await page.screenshot({ path: 'e2e/screenshots/05-generation-result.png' });
@@ -127,7 +142,8 @@ test('story generation flow — start to SSE result', async ({ page }) => {
 
 // ── Personalities page ────────────────────────────────────────────────────────
 
-test('personalities page loads and create form works', async ({ page }) => {
+test('personalities page loads and create form works', async ({ page, request }) => {
+  const token = await authedPage(page, request);
   await page.goto(`${FRONTEND}/personalities`);
   await page.waitForLoadState('networkidle');
 
@@ -150,11 +166,11 @@ test('personalities page loads and create form works', async ({ page }) => {
   console.log('✅ Personality created via UI');
 
   // Delete all test personas via API to avoid leftover state
-  const listR = await page.request.get(`${API}/api/v1/personalities/`);
+  const listR = await page.request.get(`${API}/api/v1/personalities/`, { headers: { authorization: `Bearer ${token}` } });
   const list = await listR.json();
   for (const p of list) {
     if (p.name === 'Playwright Test Persona') {
-      await page.request.delete(`${API}/api/v1/personalities/${p.id}`);
+      await page.request.delete(`${API}/api/v1/personalities/${p.id}`, { headers: { authorization: `Bearer ${token}` } });
     }
   }
   await page.reload();
