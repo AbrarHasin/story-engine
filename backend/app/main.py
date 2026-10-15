@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.database import engine
 from app.core.observability import get_langfuse
+from app.core.prod_guard import assert_production_safe
 from app.api.v1.auth          import router as auth_router
 from app.api.v1.stories      import router as stories_router
 from app.api.v1.personalities import router as personalities_router
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    assert_production_safe(settings)  # refuse to start in prod with dev/missing secrets
     logger.info("Starting Story Engine v%s", settings.APP_VERSION)
 
     # Verify Langfuse connection
