@@ -76,11 +76,23 @@ class AnthropicAdapter(LLMAdapter):
         from langchain_anthropic import ChatAnthropic
         from pydantic import SecretStr
 
+        model = self.model_name(role)
+        extra: dict = {}
+        if model.startswith(("claude-haiku-5", "claude-sonnet-5")):
+            # 5.x models reject non-default sampling params and think by default
+            # (thinking tokens bill as output and would eat the small max_tokens caps).
+            extra["thinking"] = (
+                {"type": "disabled"} if model.startswith("claude-haiku-5")
+                else {"type": "between_tools"}
+            )
+        else:
+            extra["temperature"] = temperature
+
         return ChatAnthropic(  # type: ignore[call-arg]
-            model=self.model_name(role),
+            model=model,
             api_key=SecretStr(settings.ANTHROPIC_API_KEY),
             max_tokens=max_tokens,
-            temperature=temperature,
+            **extra,
             timeout=settings.LLM_TIMEOUT_SECONDS,
             max_retries=settings.LLM_MAX_RETRIES,
         )
@@ -93,11 +105,12 @@ class AnthropicAdapter(LLMAdapter):
         ])
 
     def cost_usd(self, model: str, input_tokens: int, output_tokens: int) -> float:
-        rates = {  # USD per 1M tokens (input, output)
-            settings.MODEL_ROUTER:      (1.00,  5.00),
-            settings.MODEL_WRITER:      (3.00, 15.00),
-            settings.MODEL_SYNTHESIZER: (3.00, 15.00),
-            settings.MODEL_PREMIUM:     (5.00, 25.00),
+        rates = {  # USD per 1M tokens (input, output), list price
+            "claude-haiku-5-5":           (0.10,  0.50),
+            "claude-sonnet-5-5":          (2.00, 10.00),
+            "claude-haiku-4-5-20251001":  (1.00,  5.00),
+            "claude-sonnet-4-6":          (3.00, 15.00),
+            "claude-opus-4-6":            (5.00, 25.00),
         }
         in_rate, out_rate = rates.get(model, (3.00, 15.00))
         return (input_tokens * in_rate + output_tokens * out_rate) / 1_000_000

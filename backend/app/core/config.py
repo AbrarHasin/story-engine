@@ -59,9 +59,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
     # Model aliases (resolved by LiteLLM proxy or direct)
-    MODEL_ROUTER: str = "claude-haiku-4-5-20251001"      # cheap, routing/sub-agents
-    MODEL_WRITER: str = "claude-sonnet-4-6"              # story writer
-    MODEL_SYNTHESIZER: str = "claude-sonnet-4-6"         # synthesizer/editor
+    MODEL_ROUTER: str = "claude-haiku-5-5"               # cheap, routing/sub-agents ($0.10/$0.50 per 1M)
+    MODEL_WRITER: str = "claude-sonnet-5-5"              # story writer ($2/$10 per 1M)
+    MODEL_SYNTHESIZER: str = "claude-sonnet-5-5"         # synthesizer/editor ($2/$10 per 1M)
     MODEL_PREMIUM: str = "claude-opus-4-6"               # premium plan only
 
     # Token limits per node
