@@ -1,42 +1,49 @@
 # Implementation Plan: Run Story Engine on AWS
 
-**Branch**: `aws-deployment-plan` | **Date**: 2026-10-16 | **Spec**: [spec.md](./spec.md)
-**Input**: spec.md, [research.md](./research.md), vault note `Projects/Story-Engine/AWS-Deployment-Architecture.md`.
+**Branch**: `aws-deployment-plan` | **Date**: 2026-10-16 (v2) | **Spec**: [spec.md](./spec.md)
+**Input**: spec.md, [research.md](./research.md), vault notes `Projects/Story-Engine/AWS-Deployment-Architecture.md`
+and `Projects/Doctor-Assistant/Cloud-Architecture.md` (Doctor-Assist spec 008, the design this follows).
 
 ## Summary
 
-Move the running compose stack from the home server to AWS. Two options are planned so the human
-can choose (D1): **Option 1 Lean** (one Lightsail host, same compose, Cloudflare Tunnel; ~$50/month,
-6 person-days) and **Option 2 Managed** (ECS Fargate, RDS + pgvector, ElastiCache, ALB,
-S3/CloudFront, Secrets Manager, ECR, CloudWatch, GitHub OIDC; ~$104-162/month, 13 person-days).
-**Recommended: Option 1**, because it is about half the cost and effort at low traffic and its images
-move to Option 2 unchanged. No build work starts until the human answers D1-D7 (research.md R5).
+**Recommended: Option S Serverless**, modelled on Doctor-Assist: the existing FastAPI app runs as one
+Lambda container image behind the Lambda Web Adapter and a streaming function URL; CloudFront serves
+the SPA from S3 and forwards `/api/*` to the function URL; Aurora Serverless v2 PostgreSQL + pgvector
+(minimum 0 ACU, auto-pause) is reached through the RDS Data API, so the Lambda needs no VPC and no NAT;
+Redis is removed. About **$12/month** at 1,000 stories, **~$1.50 idle**, **11.5 person-days** (~14 with
+contingency).
+
+**Baseline: Option 1 Lean** (one Lightsail host, same compose, Cloudflare Tunnel): ~$50/month flat,
+6 person-days. Choose it if go-live speed matters more than ~$38/month. Option 2 Managed (Fargate,
+~$104-162/month, 13 person-days) is not pursued. No build work starts until D1-D9 are answered.
 
 ## Technical Context
 
 **Language/Version**: Python 3.12 (backend), TypeScript 5 / React 18 / Vite (frontend)
-**Primary Dependencies**: FastAPI, LangGraph 1.x, SQLAlchemy async, Alembic, Langfuse v3, sentence-transformers
-**Storage**: PostgreSQL 16 + pgvector; Redis 7 / Valkey; S3 for backups (and SPA in Option 2)
-**Testing**: pytest with mocked LLM in CI; Playwright e2e against the deployed URL; restore drill
-**Target Platform**: AWS, one region (D2). Option 1 Lightsail Linux host; Option 2 ECS Fargate ARM64
+**Primary Dependencies**: FastAPI, LangGraph 1.x, SQLAlchemy async, Alembic, Langfuse, embeddings
+([OPT-S] ONNX MiniLM instead of torch); [OPT-S] AWS Lambda Web Adapter, boto3 `rds-data`
+**Storage**: [OPT-S] Aurora Serverless v2 PostgreSQL 16 + pgvector via Data API; S3 for the SPA.
+[OPT-1] Postgres + Redis containers; S3 for backups
+**Testing**: pytest with mocked LLM in CI; [OPT-S] shim tests against a real Aurora; Playwright e2e on the deployed URL
+**Target Platform**: AWS, one region (D2). [OPT-S] Lambda arm64 container image; [OPT-1] Lightsail Linux host
 **Project Type**: web service + SPA (existing)
-**Performance Goals**: SSE streams up to 300 s without cut; deploy <= 15 min; rollback <= 10 min
-**Constraints**: hosting <= $60/month (Opt 1) or <= $120 / $180 (Opt 2); no NAT gateway; no secrets in git or images
+**Performance Goals**: SSE streams up to 600 s; first event p95 <= 5 s warm DB; deploy <= 15 min; rollback <= 10 min
+**Constraints**: [OPT-S] <= $20/month at low traffic, <= $5 idle; no NAT gateway, no ALB, no always-on compute; no secrets in git or images
 **Scale/Scope**: under 1,000 stories/month, a few concurrent streams
 
 ## Constitution Check
 
 | Principle | Status | Note |
 |---|---|---|
-| I Token cost | PASS | Hosting only; per-story LLM cost unchanged (~$0.0073). Bedrock (D4) would need its own cost delta. |
+| I Token cost | PASS | Hosting only; per-story LLM cost unchanged (~$0.0073). |
 | II Model tiering | PASS | No model change. |
-| III Provider-agnostic | PASS | Bedrock, if chosen, is a new adapter, not node edits. |
-| IV Observable | PASS / DECIDE | Self-hosted Langfuse complies. Langfuse Cloud (D5) requires a constitution amendment PR first. |
-| V Streaming contract | PASS with work | FR-002 sets 300 s on every hop; covered by an e2e long-stream test. |
-| VI Secure by default | DEPENDS ON P0 | Needs HAG-17 `prod_guard`, real secrets, frontend token; FR-004/005/012 add secrets store, OIDC, no open ports. |
-| VII Test discipline | PASS | CI stays mocked; deploy job adds `/health` smoke and post-deploy e2e. |
-| VIII Licensing | PASS | No new runtime dependency in Option 1; Option 2 IaC tool (D6) is not shipped in the app. Terraform is BUSL-1.1 (tooling only, unverified impact); OpenTofu (MPL-2.0) is the GPL-friendly fallback. |
-| Workflow: CD = `make deploy` + `/health` smoke | AMEND | CD moves to a GitHub Actions deploy job; the constitution's Development Workflow line needs an amendment when this is built. |
+| III Provider-agnostic | PASS | Bedrock (D4) would be a new adapter, not node edits. |
+| IV Observable | PASS / DECIDE | Langfuse on the home server via Tunnel complies; Langfuse Cloud (D5) needs an amendment. Self-host on AWS breaks the cost case. |
+| V Streaming contract | PASS with work | Same events; [OPT-S] adds `: ping` comments (ignored by SSE clients) and a 600 s run deadline. |
+| VI Secure by default | DEPENDS ON P0 | Plus origin-verify header, IAM-only DB access, Parameter Store, OIDC. |
+| VII Test discipline | PASS with work | CI stays mocked; Data API shim needs an integration suite against Aurora (not in CI by default). |
+| VIII Licensing | PASS | Lambda Web Adapter Apache-2.0, fastembed Apache-2.0, AWS SAM CLI Apache-2.0 (tooling). |
+| Workflow: CD = `make deploy` + `/health` smoke | AMEND | CD moves to a GitHub Actions deploy job. |
 
 ## Project Structure
 
@@ -44,47 +51,55 @@ move to Option 2 unchanged. No build work starts until the human answers D1-D7 (
 
 ```text
 specs/002-aws-deployment/
-├── spec.md       # what and why, two options
-├── plan.md       # this file
-├── research.md   # prices with sources, findings, open decisions D1-D7
-└── tasks.md      # phased tasks for both options
+  spec.md       # what and why; Option S recommended, Option 1 baseline
+  plan.md       # this file
+  research.md   # prices with sources, Doctor-Assist comparison, decisions D1-D9
+  tasks.md      # phased tasks for Option S and Option 1
 ```
 
-### Source Code (repository root) - files the build would touch (none touched by this plan)
+### Source Code - files the build would touch (none touched by this plan)
 
 ```text
-docker-compose.prod.yml      # Opt 1: env secrets, cloudflared service, no dev ports
-nginx/prod.conf              # keep 300 s, no buffering
-backend/Dockerfile           # multi-stage, non-root, bake MiniLM model, proxy headers
-backend/app/core/config.py   # DB/Redis TLS settings (Opt 2), public URLs
-frontend/Dockerfile          # build arg VITE_API_BASE_URL
-.github/workflows/deploy.yml # new: OIDC deploy job (both options)
-infra/                       # new: Opt 1 small Terraform/CDK or scripts; Opt 2 full IaC (D6)
-docs/runbook-aws.md          # new: deploy, rollback, restore
+backend/Dockerfile.lambda        # [OPT-S] arm64 image, Lambda Web Adapter, ONNX model baked in
+backend/app/core/database.py     # [OPT-S] engine over the Data API shim (or NullPool asyncpg if D7 = VPC)
+backend/app/core/dataapi.py      # [OPT-S] new: async Data API adapter, casts, resume retry
+backend/app/core/limits.py       # [OPT-S] Postgres rate-limit window; ignore stale running rows
+backend/app/core/origin_guard.py # [OPT-S] new: reject requests without X-Origin-Verify
+backend/app/api/v1/stories.py    # [OPT-S] SSE ping every 15 s, 600 s deadline, Langfuse flush
+backend/app/agents/graph.py      # [OPT-S] checkpointer off by setting
+backend/app/cache/semantic.py    # [OPT-S] ONNX embedder, lazy load
+backend/alembic/versions/0005_*  # [OPT-S] rate_limit_window table
+frontend (build config)          # VITE_API_BASE_URL = same origin "/api"
+.github/workflows/deploy.yml     # new: OIDC deploy job (both options)
+infra/template.yaml              # [OPT-S] AWS SAM: Lambda, URL, Aurora, CloudFront, S3, alarms (D6)
+docs/runbook-aws.md              # new: deploy, rollback, restore, resume behaviour
 ```
 
-**Structure Decision**: infrastructure code lives under a new top-level `infra/` so app code stays
-unchanged in shape; nothing is created by this planning branch.
+**Structure Decision**: infrastructure lives under a new top-level `infra/`, as in Doctor-Assist;
+the app keeps its shape; Option S adds a small database adapter and an origin guard.
 
 ## Phases
 
-| Phase | Option 1 Lean | Days | Option 2 Managed | Days |
+| Phase | Option S Serverless | Days | Option 1 Lean | Days |
 |---|---|---|---|---|
 | P0 | Prod readiness (shared) | 1.5 | Prod readiness (shared) | 1.5 |
-| P1 | Lightsail host, Docker, firewall | 0.5 | IaC base: VPC, SGs, IAM, OIDC, ECR | 2.0 |
-| P2 | Prod compose, cloudflared, env secrets | 1.0 | RDS + pgvector, ElastiCache, Secrets Manager, data move | 1.5 |
-| P3 | Data move, pg_dump to S3, restore drill | 1.0 | Slim image, ECS service, ALB 300 s, migrate task | 2.5 |
-| P4 | CI/CD to ECR + SSM deploy | 1.0 | S3 + CloudFront SPA, api host | 1.0 |
-| P5 | Monitoring, runbook | 0.5 | OIDC deploy workflow, rollback | 1.5 |
-| P6 | Cutover | 0.5 | Code + config: TLS, proxy headers, URLs | 1.0 |
-| P7 | - | - | Monitoring, cutover, SSE load test, runbook | 2.0 |
-| **Total** | | **6** | | **13** |
+| P1 | SAM base: ECR, OIDC role, SSM parameters, budget | 1.0 | Lightsail host, Docker, firewall | 0.5 |
+| P2 | Aurora SV2 + pgvector + Data API, data move | 1.0 | Prod compose, cloudflared, env secrets | 1.0 |
+| P3 | Data access over Data API (shim, txns, casts, retry, tests) | 3.0 | Data move, pg_dump to S3, restore drill | 1.0 |
+| P4 | Lambda image: Web Adapter, streaming URL, ping, deadline, flush, no Redis, ONNX | 1.5 | CI/CD to ECR + SSM deploy | 1.0 |
+| P5 | Edge: S3 + CloudFront, origin header, ACM, Cloudflare CNAME | 1.0 | Monitoring, runbook | 0.5 |
+| P6 | CI/CD: OIDC, migrate Lambda, alias deploy + rollback | 1.0 | Cutover | 0.5 |
+| P7 | Alarms, IPN + long-stream + cold-start tests, runbook, cutover | 1.5 | - | - |
+| **Total** | | **11.5** | | **6** |
 
-Add 20% contingency: Option 1 ~7, Option 2 ~16 person-days.
+Add 20% contingency: Option S ~14, Option 1 ~7. If D7 = Lambda in VPC with asyncpg + NAT instance,
+Option S P3 drops to ~1.0 day (total ~9.5) for ~$7/month more.
 
 ## Complexity Tracking
 
 | Violation / addition | Why needed | Simpler alternative rejected because |
 |---|---|---|
-| Option 2 adds IaC, VPC, five managed services | Managed backups, HA, scaling | Option 1 is the simpler alternative and is the recommendation |
-| CD moves from `make deploy` to a deploy job | No shell on the home server any more | SSH-from-laptop deploys break FR-005 (OIDC, no stored keys) |
+| Data API adapter under SQLAlchemy async | Keeps Lambda out of the VPC: no NAT ($33/month), no open DB port; Doctor-Assist pattern | Lambda in VPC + NAT instance is D7's alternative; it is cheaper in effort, dearer per month and adds a host to patch |
+| SSE heartbeat + run deadline | CloudFront 30 s per-packet timeout; Lambda timeout skips `finally` | None: without them streams drop and stories stick in `running` |
+| Redis removed | No always-on cache in a serverless stack | ElastiCache Serverless or a node costs more than the whole Option S bill |
+| CD moves from `make deploy` to a deploy job | No home server shell any more | SSH-from-laptop deploys break FR-005 |
