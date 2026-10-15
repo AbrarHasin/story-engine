@@ -16,11 +16,27 @@ class Settings(BaseSettings):
     BACKEND_PUBLIC_URL: str = "http://localhost:8080"  # public base for gateway callback URLs
     BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3001"]
 
-    # Database
+    # Database. DB_BACKEND "asyncpg" (local dev, DATABASE_URL) or "dataapi"
+    # (AWS: Aurora Serverless v2 over the RDS Data API, app.core.dataapi).
+    DB_BACKEND: str = "asyncpg"
     DATABASE_URL: str = "postgresql+asyncpg://storyengine:changeme@localhost:5432/storyengine"
+    DATAAPI_RESOURCE_ARN: str = ""   # Aurora cluster ARN
+    DATAAPI_SECRET_ARN: str = ""     # Secrets Manager ARN of the DB credentials
+    DATAAPI_DATABASE: str = "storyengine"
+    DATAAPI_RESUME_TIMEOUT_SECONDS: float = 45.0  # wait for a paused (0 ACU) cluster
 
-    # Redis
+    # Redis: only for the optional LangGraph checkpointer (CHECKPOINTER=redis).
+    # The rate limit lives in Postgres (rate_limit_window), so production runs without Redis.
     REDIS_URL: str = "redis://localhost:6379"
+    CHECKPOINTER: str = "none"   # "none" (stateless) or "redis"
+
+    # Long runs (Lambda has a hard 900 s timeout)
+    RUN_DEADLINE_SECONDS: float = 600.0   # past this the story is marked failed
+    SSE_PING_SECONDS: float = 15.0        # ": ping" comment while a node runs; 0 disables
+    STALE_RUNNING_MINUTES: int = 15       # quota ignores `running` rows older than this
+
+    # Client IP: trust X-Forwarded-For / the API Gateway request context (behind AWS edge)
+    TRUST_PROXY_HEADERS: bool = False
 
     # LLM provider selection — "anthropic" (Claude API) or "local" (Docker Model Runner)
     LLM_PROVIDER: str = "anthropic"
@@ -77,6 +93,9 @@ class Settings(BaseSettings):
     SEMANTIC_CACHE_THRESHOLD: float = 0.92   # min cosine similarity for a hit
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"  # local, free
     EMBEDDING_DIM: int = 384                 # must match stories.embedding (migration 0003)
+    # "sentence-transformers" (torch, local dev) or "fastembed" (ONNX, Lambda image)
+    EMBEDDING_BACKEND: str = "sentence-transformers"
+    EMBEDDING_CACHE_DIR: str = ""            # baked model dir for fastembed (read-only on Lambda)
 
     # Token limits per node
     MAX_TOKENS_RESEARCH: int = 300

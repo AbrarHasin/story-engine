@@ -49,13 +49,33 @@ def cache_text(
     )
 
 
+def _load_model() -> Any:
+    """Load the embedder once, on first use (never at import: keeps Lambda cold starts lean).
+
+    EMBEDDING_BACKEND=fastembed runs the same MiniLM as ONNX (no torch), from the model
+    directory baked into the Lambda image (EMBEDDING_CACHE_DIR; the image filesystem is
+    read-only, so nothing is downloaded at runtime).
+    """
+    if settings.EMBEDDING_BACKEND == "fastembed":
+        from fastembed import TextEmbedding
+
+        kwargs: dict[str, Any] = {}
+        if settings.EMBEDDING_CACHE_DIR:
+            kwargs["cache_dir"] = settings.EMBEDDING_CACHE_DIR
+        return TextEmbedding(model_name=settings.EMBEDDING_MODEL, **kwargs)
+    from sentence_transformers import SentenceTransformer
+
+    return SentenceTransformer(settings.EMBEDDING_MODEL)
+
+
 def _embed_sync(text: str) -> list[float]:
     global _model
     if _model is None:
-        from sentence_transformers import SentenceTransformer
-
-        _model = SentenceTransformer(settings.EMBEDDING_MODEL)
-    vec = _model.encode(text, normalize_embeddings=True)
+        _model = _load_model()
+    if settings.EMBEDDING_BACKEND == "fastembed":
+        vec = next(iter(_model.embed([text])))   # fastembed returns L2-normalised vectors
+    else:
+        vec = _model.encode(text, normalize_embeddings=True)
     return [float(x) for x in vec]
 
 

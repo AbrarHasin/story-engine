@@ -6,11 +6,12 @@ GET  /api/v1/stories/{id}       → fetch completed story
 GET  /api/v1/stories/           → list user's stories
 DELETE /api/v1/stories/{id}     → delete story
 """
+import asyncio
 import json
 import uuid
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -19,13 +20,14 @@ from sqlalchemy import select
 
 from app.cache.semantic import with_semantic_cache
 from app.core.database import get_db, SessionLocal
-from app.core.observability import get_langfuse_callback, langfuse_metadata
+from app.core.config import settings
+from app.core.observability import flush_langfuse, get_langfuse_callback, langfuse_metadata
 from app.llm.adapter import classify_llm_error
 from app.core.auth import get_current_user
 from app.core.limits import enforce_quota, enforce_rate_limit, record_completion
 from app.models.schemas import StoryGenerateRequest, StoryResponse
 from app.models.db import Story, StoryStatus, Personality, User
-from app.agents.graph import get_compiled_graph, get_redis_checkpointer
+from app.agents.graph import get_checkpointer, get_compiled_graph
 from app.agents.state import StoryState
 
 router = APIRouter(prefix="/stories", tags=["Stories"])
@@ -39,15 +41,70 @@ _checkpointer = None
 async def _get_graph():
     global _graph, _checkpointer
     if _graph is None:
-        _checkpointer = await get_redis_checkpointer()
+        _checkpointer = await get_checkpointer()
         _graph = await get_compiled_graph(_checkpointer)
     return _graph
 
 
 # ── SSE helpers ───────────────────────────────────────────────────────────────
 
+SSE_PING = ": ping\n\n"   # SSE comment: clients ignore it, idle timeouts see traffic
+
+
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+class RunDeadlineExceeded(Exception):
+    """The graph ran past RUN_DEADLINE_SECONDS."""
+
+
+_PING = object()
+
+
+async def _paced(
+    source: AsyncIterator[Any], deadline_s: float, ping_s: float
+) -> AsyncGenerator[Any, None]:
+    """Yield items from `source`, `_PING` after every `ping_s` of silence, and raise
+    RunDeadlineExceeded once `deadline_s` has passed (the source is closed first)."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + deadline_s
+    it = source.__aiter__()
+    pending: asyncio.Future | None = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(it.__anext__())
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise RunDeadlineExceeded()
+            wait = min(remaining, ping_s) if ping_s > 0 else remaining
+            done, _ = await asyncio.wait({pending}, timeout=wait)
+            if not done:
+                if loop.time() >= deadline:
+                    raise RunDeadlineExceeded()
+                yield _PING
+                continue
+            try:
+                item = pending.result()
+            except StopAsyncIteration:
+                pending = None
+                return
+            pending = None
+            yield item
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            try:
+                await pending
+            except (asyncio.CancelledError, StopAsyncIteration, Exception):  # noqa: BLE001
+                pass
+        aclose = getattr(it, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:  # noqa: BLE001 — best effort
+                logger.debug("closing the graph stream failed", exc_info=True)
 
 
 def _utcnow() -> datetime:
@@ -116,8 +173,12 @@ async def _stream_generation(
     final_state = initial
 
     try:
-        # astream_events gives us per-node events
-        async for event in graph.astream_events(initial, config=config, version="v2"):
+        # astream_events gives us per-node events; _paced adds pings and the run deadline
+        events = graph.astream_events(initial, config=config, version="v2")
+        async for event in _paced(events, settings.RUN_DEADLINE_SECONDS, settings.SSE_PING_SECONDS):
+            if event is _PING:
+                yield SSE_PING
+                continue
             kind = event.get("event")
             name = event.get("name", "")
 
@@ -154,8 +215,12 @@ async def _stream_generation(
                 final_state = event.get("data", {}).get("output", {})
 
     except Exception as e:
-        logger.exception("Graph execution error for story %s", story_id)
-        code, message = classify_llm_error(e)
+        if isinstance(e, RunDeadlineExceeded):
+            logger.error("Story %s passed the %.0f s run deadline", story_id, settings.RUN_DEADLINE_SECONDS)
+            code, message = "deadline", "The story took too long and was stopped. Please try again."
+        else:
+            logger.exception("Graph execution error for story %s", story_id)
+            code, message = classify_llm_error(e)
 
         # Mark story failed before emitting, so a client disconnect can't skip it
         async with SessionLocal() as session:
@@ -166,6 +231,9 @@ async def _stream_generation(
 
         yield _sse("error", {"code": code, "message": message, "story_id": str(story_id)})
         return
+    finally:
+        # Lambda freezes after the response: send batched traces now (no-op when disabled)
+        flush_langfuse()
 
     # Authoritative totals: sum every node's usage from the final state
     final_usage = final_state.get("token_usage") or []
@@ -196,7 +264,7 @@ async def _stream_generation(
     yield _sse("done", {
         "story_id": str(story_id),
         "tokens": {"input": total_input, "output": total_output, "cost_usd": round(total_cost, 6)},
-        "langfuse_trace": f"{_get_langfuse_url()}/trace/{trace_id}",
+        "langfuse_trace": f"{_get_langfuse_url()}/trace/{trace_id}" if cb else None,
     })
 
 
@@ -209,7 +277,6 @@ async def _get_owned_story(db: AsyncSession, story_id: uuid.UUID, user: User) ->
 
 
 def _get_langfuse_url() -> str:
-    from app.core.config import settings
     return settings.LANGFUSE_HOST
 
 

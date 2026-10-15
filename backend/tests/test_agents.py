@@ -266,7 +266,7 @@ async def _drive(monkeypatch, graph, story):
 
     def fake_callback(trace_name, trace_id=None):
         seen["trace_id"] = trace_id
-        return None
+        return seen.get("callback", "fake-langfuse-callback")
 
     monkeypatch.setattr(stories, "_get_graph", AsyncMock(return_value=graph))
     monkeypatch.setattr(stories, "SessionLocal", factory)
