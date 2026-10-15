@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, Download, ExternalLink, CheckCircle2, XCircle, Loader2, Clock } from 'lucide-react'
 import { clsx } from 'clsx'
 
-const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const API = import.meta.env.VITE_API_BASE_URL || ''
 
 interface StoryDetail {
   id: string
