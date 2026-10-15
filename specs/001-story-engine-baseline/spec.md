@@ -121,7 +121,11 @@ Operators open per-story Langfuse traces and check dependency health.
 - **NFR-004 [GAP]**: Payment confirmation MUST be verified with the gateway (Principle VI). Not implemented.
 - **NFR-005 [GAP]**: Production MUST fail closed on the default JWT secret (Principle VI). Not implemented.
 - **NFR-006 [GAP]**: Discarded LLM calls MUST NOT ship (Principle I). The supervisor route is discarded.
-- **NFR-007 [GAP]**: Per-user quotas and rate limits MUST bound spend on the free plan.
+- **NFR-007 [GAP]**: Per-user quotas and rate limits MUST bound spend on the free plan (Hub: 5 stories/month).
+- **NFR-008 [GAP]**: Synthesizer output capacity MUST be at least the writer cap so the final story is never truncated (code: 500 vs 1500).
+- **NFR-009 [GAP]**: Production compose MUST NOT hard-code Langfuse keys or database passwords (Principle VI).
+- **FR-019 [GAP]**: The frontend MUST authenticate (login, bearer header) when `JWT_SECRET_KEY` is not the dev value.
+- **FR-020 [GAP]**: `stories.research` MUST be persisted and included in the Markdown export.
 
 ### Key Entities
 
