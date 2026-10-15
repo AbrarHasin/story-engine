@@ -46,6 +46,19 @@ def verify_password(plain: str, hashed: str) -> bool:
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 DEV_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+DEFAULT_DEV_JWT_SECRET = "changeme-in-production"
+PRODUCTION_ENVS = {"production", "prod"}
+
+
+def dev_user_fallback_enabled() -> bool:
+    """True only in a dev setup: not production AND the JWT secret is the dev default.
+
+    In production a request without a token is always unauthenticated, even if
+    the JWT secret was left at its default.
+    """
+    if settings.APP_ENV.lower() in PRODUCTION_ENVS:
+        return False
+    return settings.JWT_SECRET_KEY == DEFAULT_DEV_JWT_SECRET
 
 
 def create_access_token(user_id: uuid.UUID, email: str) -> str:
@@ -83,12 +96,12 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """
-    Require authenticated user. In dev mode (DEBUG=True or no JWT_SECRET changed),
+    Require authenticated user. In dev mode (see dev_user_fallback_enabled),
     falls back to the seeded dev user so the app works without login.
+    Never in production.
     """
-    # Dev mode fallback: if no token and using default secret, return dev user
     if token is None:
-        if settings.JWT_SECRET_KEY == "changeme-in-production":
+        if dev_user_fallback_enabled():
             user = await db.get(User, DEV_USER_ID)
             if user:
                 return user
@@ -123,7 +136,7 @@ async def get_optional_user(
 ) -> User | None:
     """Same as get_current_user but returns None instead of 401."""
     if token is None:
-        if settings.JWT_SECRET_KEY == "changeme-in-production":
+        if dev_user_fallback_enabled():
             return await db.get(User, DEV_USER_ID)
         return None
 
