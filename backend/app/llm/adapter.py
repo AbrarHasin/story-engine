@@ -81,6 +81,8 @@ class AnthropicAdapter(LLMAdapter):
             api_key=SecretStr(settings.ANTHROPIC_API_KEY),
             max_tokens=max_tokens,
             temperature=temperature,
+            timeout=settings.LLM_TIMEOUT_SECONDS,
+            max_retries=settings.LLM_MAX_RETRIES,
         )
 
     def system_message(self, text: str) -> SystemMessage:
@@ -136,7 +138,7 @@ class LocalModelAdapter(LLMAdapter):
             max_tokens=max_tokens,
             temperature=temperature,
             timeout=settings.LOCAL_LLM_TIMEOUT_SECONDS,
-            max_retries=1,
+            max_retries=settings.LLM_MAX_RETRIES,
         )
 
     def cost_usd(self, model: str, input_tokens: int, output_tokens: int) -> float:
@@ -194,3 +196,28 @@ def extract_usage(response: Any, model: str, adapter: LLMAdapter | None = None) 
         output_tokens=out_t,
         cost_usd=adapter.cost_usd(model, in_t, out_t),
     )
+
+
+def classify_llm_error(exc: BaseException) -> tuple[str, str]:
+    """Map a model-call failure to a stable (code, client-safe message).
+
+    Never includes the raw exception text, which can carry URLs or keys.
+    """
+    import asyncio
+
+    import anthropic
+    import httpx
+    import openai
+
+    if isinstance(exc, (
+        anthropic.APITimeoutError, openai.APITimeoutError,
+        httpx.TimeoutException, asyncio.TimeoutError, TimeoutError,
+    )):
+        return "llm_timeout", "The language model timed out. Please try again."
+    if isinstance(exc, (
+        anthropic.APIConnectionError, openai.APIConnectionError,
+        anthropic.RateLimitError, openai.RateLimitError,
+        anthropic.InternalServerError, openai.InternalServerError,
+    )):
+        return "llm_unavailable", "The language model is temporarily unavailable. Please try again."
+    return "internal_error", "Story generation failed. Please try again."

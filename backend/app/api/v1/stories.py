@@ -9,7 +9,7 @@ DELETE /api/v1/stories/{id}     → delete story
 import json
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,8 +17,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.core.database import get_db
-from app.core.observability import get_langfuse_callback
+from app.core.database import get_db, SessionLocal
+from app.core.observability import get_langfuse_callback, langfuse_metadata
+from app.llm.adapter import classify_llm_error
 from app.core.auth import get_current_user
 from app.models.schemas import StoryGenerateRequest, StoryResponse
 from app.models.db import Story, StoryStatus, Personality, User
@@ -47,13 +48,22 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _utcnow() -> datetime:
+    """Current UTC time as naive UTC, matching the TIMESTAMP WITHOUT TIME ZONE columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 async def _stream_generation(
     story_id: uuid.UUID,
     request: StoryGenerateRequest,
     personality_prompt: str | None,
     db: AsyncSession,
 ) -> AsyncGenerator[str, None]:
-    """Run LangGraph and stream SSE events for each node completion."""
+    """Run LangGraph and stream SSE events for each node completion.
+
+    The request-scoped `db` is closed once the handler returns, so the generator
+    never touches it: it opens its own short-lived sessions instead.
+    """
 
     graph = await _get_graph()
     run_id = str(uuid.uuid4())
@@ -81,11 +91,18 @@ async def _stream_generation(
         "run_id":             run_id,
     }
 
-    # Langfuse callback for full trace
-    cb = get_langfuse_callback(trace_name="story_generation", user_id=str(story_id))
+    async with SessionLocal() as session:
+        row = await session.get(Story, story_id)
+        user_id = str(row.user_id) if row else None
+
+    # Langfuse: real user id, and a trace id we also use to build the trace URL
+    trace_id = run_id.replace("-", "")
+    cb = get_langfuse_callback(trace_name="story_generation", trace_id=trace_id)
     config = {
         "configurable": {"thread_id": str(story_id)},
         "callbacks": [cb] if cb else [],
+        "metadata": langfuse_metadata(user_id, str(story_id)),
+        "run_name": "story_generation",
         "run_id": run_id,
     }
 
@@ -136,13 +153,16 @@ async def _stream_generation(
 
     except Exception as e:
         logger.exception("Graph execution error for story %s", story_id)
-        yield _sse("error", {"message": str(e)})
+        code, message = classify_llm_error(e)
 
-        # Mark story failed in DB
-        story = await db.get(Story, story_id)
-        if story:
-            story.status = StoryStatus.failed
-            await db.commit()
+        # Mark story failed before emitting, so a client disconnect can't skip it
+        async with SessionLocal() as session:
+            story = await session.get(Story, story_id)
+            if story:
+                story.status = StoryStatus.failed
+                await session.commit()
+
+        yield _sse("error", {"code": code, "message": message, "story_id": str(story_id)})
         return
 
     # Authoritative totals: sum every node's usage from the final state
@@ -153,25 +173,27 @@ async def _stream_generation(
         total_cost   = sum(u["cost_usd"] for u in final_usage)
 
     # Persist completed story
-    story = await db.get(Story, story_id)
-    if story:
-        story.status        = StoryStatus.completed
-        story.light_side    = "\n".join(final_state.get("light_bullets", []))
-        story.dark_side     = "\n".join(final_state.get("dark_bullets", []))
-        story.facts         = "\n".join(final_state.get("fact_bullets", []))
-        story.narrative     = final_state.get("story_draft")
-        story.final_output  = final_state.get("final_output")
-        story.tokens_input  = total_input
-        story.tokens_output = total_output
-        story.cost_usd      = total_cost
-        story.langgraph_run_id = run_id
-        story.completed_at  = datetime.utcnow()
-        await db.commit()
+    async with SessionLocal() as session:
+        story = await session.get(Story, story_id)
+        if story:
+            story.status        = StoryStatus.completed
+            story.research      = "\n".join(final_state.get("research_bullets", []))
+            story.light_side    = "\n".join(final_state.get("light_bullets", []))
+            story.dark_side     = "\n".join(final_state.get("dark_bullets", []))
+            story.facts         = "\n".join(final_state.get("fact_bullets", []))
+            story.narrative     = final_state.get("story_draft")
+            story.final_output  = final_state.get("final_output")
+            story.tokens_input  = total_input
+            story.tokens_output = total_output
+            story.cost_usd      = total_cost
+            story.langgraph_run_id = run_id
+            story.completed_at  = _utcnow()
+            await session.commit()
 
     yield _sse("done", {
         "story_id": str(story_id),
         "tokens": {"input": total_input, "output": total_output, "cost_usd": round(total_cost, 6)},
-        "langfuse_trace": f"{_get_langfuse_url()}/trace/{run_id}",
+        "langfuse_trace": f"{_get_langfuse_url()}/trace/{trace_id}",
     })
 
 
@@ -300,6 +322,13 @@ async def export_story(
     lines.append(f"> Tonality: {story.tonality} | Audience: {story.audience} | "
                  f"Generated: {story.created_at.isoformat()}")
     lines.append("")
+
+    if story.research:
+        lines.append("## Research")
+        for b in story.research.split("\n"):
+            if b.strip():
+                lines.append(f"- {b.strip()}")
+        lines.append("")
 
     if story.light_side:
         lines.append("## Light Side")
