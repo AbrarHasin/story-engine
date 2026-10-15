@@ -58,19 +58,19 @@ export default function SettingsPage() {
             />
             <HealthCard
               label="PostgreSQL"
-              status={health.db === 'ok' ? 'ok' : 'error'}
+              status={health.db === 'ok' ? 'ok' : health.db.startsWith('not checked') ? 'warn' : 'error'}
               detail={health.db}
               icon={<Database size={14} />}
             />
             <HealthCard
               label="Redis"
-              status={health.redis === 'ok' ? 'ok' : 'error'}
+              status={health.redis === 'ok' ? 'ok' : health.redis === 'not used' ? 'warn' : 'error'}
               detail={health.redis}
               icon={<Database size={14} />}
             />
             <HealthCard
               label="Langfuse"
-              status={health.langfuse === 'ok' ? 'ok' : health.langfuse === 'not configured' ? 'warn' : 'error'}
+              status={health.langfuse === 'ok' ? 'ok' : ['not configured', 'disabled'].includes(health.langfuse) ? 'warn' : 'error'}
               detail={health.langfuse}
               icon={<Eye size={14} />}
             />

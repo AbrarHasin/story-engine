@@ -28,7 +28,7 @@ export interface GenerationState {
   // Actions
   start: (storyId: string, runId: string) => void
   nodeComplete: (result: NodeResult & { tokens: TokenUsage }) => void
-  finish: (tokens: TokenUsage, traceUrl: string) => void
+  finish: (tokens: TokenUsage, traceUrl: string | null) => void
   setError: (msg: string) => void
   reset: () => void
 }
