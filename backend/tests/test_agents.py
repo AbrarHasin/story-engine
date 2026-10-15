@@ -106,3 +106,244 @@ async def test_synthesizer_uses_writer_sized_cap_even_if_configured_lower():
 def test_graph_has_no_supervisor_node():
     from app.agents.graph import build_graph
     assert "supervisor" not in build_graph().nodes
+
+
+# -- LLM resilience: timeout + bounded retry, clean error classification ------
+
+def test_anthropic_chat_has_timeout_and_bounded_retries():
+    from app.core.config import settings
+    from app.llm import AnthropicAdapter
+
+    with patch.object(settings, "LLM_TIMEOUT_SECONDS", 12.0), \
+         patch.object(settings, "LLM_MAX_RETRIES", 4), \
+         patch.object(settings, "ANTHROPIC_API_KEY", "sk-test"):
+        model = AnthropicAdapter().chat("writer", 100, 0.5)
+
+    assert model.default_request_timeout == 12.0  # type: ignore[attr-defined]
+    assert model.max_retries == 4  # type: ignore[attr-defined]
+
+
+def test_local_chat_has_timeout_and_bounded_retries():
+    from app.core.config import settings
+    from app.llm import LocalModelAdapter
+
+    with patch.object(settings, "LOCAL_LLM_TIMEOUT_SECONDS", 77), \
+         patch.object(settings, "LLM_MAX_RETRIES", 3):
+        model = LocalModelAdapter().chat("writer", 100, 0.5)
+
+    assert model.request_timeout == 77  # type: ignore[attr-defined]
+    assert model.max_retries == 3  # type: ignore[attr-defined]
+
+
+def test_resilience_defaults_are_sane():
+    from app.core.config import settings
+    assert settings.LLM_TIMEOUT_SECONDS > 0
+    assert 0 <= settings.LLM_MAX_RETRIES <= 5
+
+
+def _req():
+    import httpx
+    return httpx.Request("POST", "https://example.invalid/v1/messages")
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_classify_timeout(provider):
+    import importlib
+    from app.llm.adapter import classify_llm_error
+
+    sdk = importlib.import_module(provider)
+    code, message = classify_llm_error(sdk.APITimeoutError(request=_req()))
+    assert code == "llm_timeout"
+    assert "timed out" in message
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_classify_connection_error_is_unavailable(provider):
+    import importlib
+    from app.llm.adapter import classify_llm_error
+
+    sdk = importlib.import_module(provider)
+    code, _ = classify_llm_error(sdk.APIConnectionError(request=_req()))
+    assert code == "llm_unavailable"
+
+
+def test_classify_unknown_error_does_not_leak_details():
+    from app.llm.adapter import classify_llm_error
+
+    code, message = classify_llm_error(RuntimeError("secret-dsn postgres://u:p@h/db"))
+    assert code == "internal_error"
+    assert "secret" not in message
+
+
+# -- SSE generator: own DB session, persisted research, trace ids, clean errors
+
+import json as _json
+import uuid as _uuid
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
+
+class _NoRequestSession:
+    """Stands in for the request-scoped session: any use is a test failure."""
+
+    def __getattr__(self, name):
+        raise AssertionError(f"request-scoped session used: {name}")
+
+
+class _FakeSessionFactory:
+    def __init__(self, story):
+        self.story = story
+        self.opened = 0
+        self.commits = 0
+        self.executes = 0
+
+    def __call__(self):
+        self.opened += 1
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, model, pk):
+        return self.story
+
+    async def execute(self, *args, **kwargs):
+        self.executes += 1
+
+    async def commit(self):
+        self.commits += 1
+
+
+class _FakeGraph:
+    def __init__(self, events=(), exc=None):
+        self.events = list(events)
+        self.exc = exc
+        self.config = None
+
+    async def astream_events(self, initial, config=None, version=None):
+        self.config = config
+        for e in self.events:
+            yield e
+        if self.exc:
+            raise self.exc
+
+
+def _fake_story(**kw):
+    base = dict(
+        id=_uuid.uuid4(), user_id=_uuid.uuid4(), status=None, topic="A topic",
+        tonality="neutral", audience="general", light_side=None, dark_side=None,
+        facts=None, research=None, narrative=None, final_output=None,
+        tokens_input=0, tokens_output=0, cost_usd=0.0, langgraph_run_id=None,
+        completed_at=None, created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def _final_events():
+    usage = [{"input_tokens": 5, "output_tokens": 7, "cost_usd": 0.001}]
+    final = {
+        "research_bullets": ["r1", "r2"], "light_bullets": ["l1"],
+        "dark_bullets": [], "fact_bullets": [], "story_draft": "draft",
+        "final_output": "final",
+    }
+    return [
+        {"event": "on_chain_end", "name": "research",
+         "data": {"output": {"research_bullets": ["r1", "r2"], "token_usage": usage}}},
+        {"event": "on_chain_end", "name": "LangGraph", "data": {"output": final}},
+    ]
+
+
+async def _drive(monkeypatch, graph, story):
+    from app.api.v1 import stories
+    from app.models.schemas import StoryGenerateRequest
+
+    factory = _FakeSessionFactory(story)
+    seen: dict = {}
+
+    def fake_callback(trace_name, trace_id=None):
+        seen["trace_id"] = trace_id
+        return None
+
+    monkeypatch.setattr(stories, "_get_graph", AsyncMock(return_value=graph))
+    monkeypatch.setattr(stories, "SessionLocal", factory)
+    monkeypatch.setattr(stories, "get_langfuse_callback", fake_callback)
+
+    events = []
+    async for chunk in stories._stream_generation(
+        story.id, StoryGenerateRequest(topic="A topic"), None, _NoRequestSession(),
+    ):
+        name, data = chunk.strip().split("\n", 1)
+        events.append((name.removeprefix("event: "), _json.loads(data.removeprefix("data: "))))
+    return events, factory, seen
+
+
+@pytest.mark.asyncio
+async def test_generator_persists_research_with_own_session(monkeypatch):
+    story = _fake_story()
+    events, factory, _ = await _drive(monkeypatch, _FakeGraph(_final_events()), story)
+
+    assert events[-1][0] == "done"
+    assert story.research == "r1\nr2"
+    assert story.status.value == "completed"
+    assert factory.opened >= 1 and factory.commits >= 1
+
+
+@pytest.mark.asyncio
+async def test_generator_completed_at_is_current_utc(monkeypatch):
+    import inspect
+    from app.api.v1 import stories
+
+    story = _fake_story()
+    await _drive(monkeypatch, _FakeGraph(_final_events()), story)
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    assert abs((story.completed_at - now).total_seconds()) < 5
+    assert "datetime.utcnow" not in inspect.getsource(stories)
+
+
+@pytest.mark.asyncio
+async def test_generator_langfuse_user_and_trace_ids(monkeypatch):
+    story = _fake_story()
+    graph = _FakeGraph(_final_events())
+    events, _, seen = await _drive(monkeypatch, graph, story)
+
+    run_id = events[0][1]["run_id"]
+    trace_id = run_id.replace("-", "")
+    assert seen["trace_id"] == trace_id
+    assert graph.config["metadata"]["langfuse_user_id"] == str(story.user_id)
+    assert graph.config["metadata"]["langfuse_user_id"] != str(story.id)
+    assert events[-1][1]["langfuse_trace"].endswith(f"/trace/{trace_id}")
+
+
+@pytest.mark.asyncio
+async def test_generator_llm_timeout_is_clean_error_event(monkeypatch):
+    import anthropic
+    import httpx
+
+    err = anthropic.APITimeoutError(request=httpx.Request("POST", "https://x.invalid/secret"))
+    story = _fake_story()
+    events, factory, _ = await _drive(monkeypatch, _FakeGraph(exc=err), story)
+
+    name, data = events[-1]
+    assert name == "error"
+    assert data["code"] == "llm_timeout"
+    assert "x.invalid" not in data["message"]
+    assert story.status.value == "failed"
+    assert not any(n == "done" for n, _ in events)
+
+
+@pytest.mark.asyncio
+async def test_export_includes_research_section():
+    from app.api.v1.stories import export_story
+
+    story = _fake_story(research="r1\nr2", light_side="l1", final_output="final")
+    response = await export_story(story.id, SimpleNamespace(id=story.user_id), _FakeSessionFactory(story))
+    body = response.body.decode()
+
+    assert "## Research" in body
+    assert "- r1" in body and "- r2" in body
+    assert body.index("## Research") < body.index("## Light Side")

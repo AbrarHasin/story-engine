@@ -107,7 +107,10 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://storyengine:changeme@localhost:5432/storyengine
 
       - name: Pytest — API
-        run: cd backend && python -m pytest tests/test_api.py -v --tb=short
+        run: >-
+          cd backend && python -m pytest
+          tests/test_api.py tests/test_ownership.py tests/test_payment.py
+          tests/test_semantic_cache.py -v --tb=short
         env:
           DATABASE_URL: postgresql+asyncpg://storyengine:changeme@localhost:5432/storyengine
           REDIS_URL: redis://localhost:6379

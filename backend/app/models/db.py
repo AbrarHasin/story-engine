@@ -106,7 +106,7 @@ class Story(Base):
     completed_at:    Mapped[datetime | None] = mapped_column(DateTime)
 
     # pgvector embedding for semantic cache / RAG
-    embedding:       Mapped[list | None] = mapped_column(Vector(1536))
+    embedding:       Mapped[list | None] = mapped_column(Vector(384))
 
     user: Mapped["User"] = relationship(back_populates="stories")
 

@@ -48,16 +48,28 @@ def get_langfuse() -> Langfuse | None:
     return _langfuse_client
 
 
-def get_langfuse_callback(trace_name: str, user_id: str | None = None) -> CallbackHandler | None:
-    """Return a LangChain/LangGraph callback handler that auto-sends traces to Langfuse."""
+def get_langfuse_callback(trace_name: str, trace_id: str | None = None) -> CallbackHandler | None:
+    """Return a LangChain/LangGraph callback handler that auto-sends traces to Langfuse.
+
+    `trace_id` (32 hex chars) pins the Langfuse trace so the caller can link to it.
+    The user and session are attached through `langfuse_metadata` in the run config.
+    """
     lf = get_langfuse()
     if lf is None:
         return None
     try:
-        return CallbackHandler(  # type: ignore[call-arg]
-            trace_name=trace_name,
-            user_id=user_id,
-        )
+        trace_context = {"trace_id": trace_id} if trace_id else None
+        return CallbackHandler(trace_context=trace_context)  # type: ignore[arg-type]
     except Exception as e:
-        logger.warning("Failed to create Langfuse callback: %s", e)
+        logger.warning("Failed to create Langfuse callback for %s: %s", trace_name, e)
         return None
+
+
+def langfuse_metadata(user_id: str | None, session_id: str | None = None) -> dict:
+    """Run-config metadata keys Langfuse reads to set the trace's user and session."""
+    meta: dict = {}
+    if user_id:
+        meta["langfuse_user_id"] = user_id
+    if session_id:
+        meta["langfuse_session_id"] = session_id
+    return meta

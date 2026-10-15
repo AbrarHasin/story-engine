@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     LOCAL_LLM_API_KEY: str = "docker"  # DMR ignores the key; client requires one
     LOCAL_LLM_TIMEOUT_SECONDS: int = 300  # local inference can be slow on CPU
 
+    # LLM resilience — applied to every model call, both providers.
+    # Retries use the provider SDK's exponential backoff with jitter.
+    LLM_TIMEOUT_SECONDS: float = 60.0  # per request (local uses LOCAL_LLM_TIMEOUT_SECONDS)
+    LLM_MAX_RETRIES: int = 2           # retries after the first attempt
+
     # LLM — Claude API
     ANTHROPIC_API_KEY: str = ""
     LITELLM_BASE_URL: str = "http://localhost:4000"
@@ -64,6 +69,12 @@ class Settings(BaseSettings):
     PLAN_LIMIT_PRO: int = 200
     PLAN_LIMIT_ENTERPRISE: int = 0
     RATE_LIMIT_PER_MINUTE: int = 5   # generate calls per user per minute; 0 disables
+
+    # Semantic cache (pgvector near-duplicate lookup before generation)
+    SEMANTIC_CACHE_ENABLED: bool = False
+    SEMANTIC_CACHE_THRESHOLD: float = 0.92   # min cosine similarity for a hit
+    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"  # local, free
+    EMBEDDING_DIM: int = 384                 # must match stories.embedding (migration 0003)
 
     # Token limits per node
     MAX_TOKENS_RESEARCH: int = 300
