@@ -51,7 +51,7 @@ class PersonalityCreate(BaseModel):
     is_default:    bool         = False
 
 class PersonalityUpdate(PersonalityCreate):
-    name: Optional[str] = None
+    name: Optional[str] = None  # type: ignore[assignment]
 
 class PersonalityResponse(PersonalityCreate):
     id:         UUID

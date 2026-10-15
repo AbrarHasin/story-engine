@@ -68,7 +68,7 @@ async def supervisor_node(state: StoryState) -> dict:
     )
     resp = await llm.ainvoke([HumanMessage(content=prompt)])
     try:
-        data = _json_loads(resp.content)
+        data = _json_loads(str(resp.content))
         route = data.get("route", "full")
     except Exception:
         route = "full"
@@ -106,11 +106,11 @@ async def research_node(state: StoryState) -> dict:
     )
     resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
     try:
-        bullets = _json_loads(resp.content)
+        bullets = _json_loads(str(resp.content))
         if not isinstance(bullets, list):
             bullets = [str(bullets)]
     except Exception:
-        bullets = [resp.content.strip()]
+        bullets = [str(resp.content).strip()]
 
     return {"research_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
@@ -133,9 +133,9 @@ async def light_side_node(state: StoryState) -> dict:
     )
     resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
     try:
-        bullets = _json_loads(resp.content)
+        bullets = _json_loads(str(resp.content))
     except Exception:
-        bullets = [resp.content.strip()]
+        bullets = [str(resp.content).strip()]
 
     return {"light_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
@@ -158,9 +158,9 @@ async def dark_side_node(state: StoryState) -> dict:
     )
     resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
     try:
-        bullets = _json_loads(resp.content)
+        bullets = _json_loads(str(resp.content))
     except Exception:
-        bullets = [resp.content.strip()]
+        bullets = [str(resp.content).strip()]
 
     return {"dark_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
@@ -182,9 +182,9 @@ async def facts_node(state: StoryState) -> dict:
     )
     resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
     try:
-        bullets = _json_loads(resp.content)
+        bullets = _json_loads(str(resp.content))
     except Exception:
-        bullets = [resp.content.strip()]
+        bullets = [str(resp.content).strip()]
 
     return {"fact_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 

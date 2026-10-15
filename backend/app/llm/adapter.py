@@ -69,10 +69,11 @@ class AnthropicAdapter(LLMAdapter):
 
     def chat(self, role: str, max_tokens: int, temperature: float) -> BaseChatModel:
         from langchain_anthropic import ChatAnthropic
+        from pydantic import SecretStr
 
-        return ChatAnthropic(
+        return ChatAnthropic(  # type: ignore[call-arg]
             model=self.model_name(role),
-            api_key=settings.ANTHROPIC_API_KEY,
+            api_key=SecretStr(settings.ANTHROPIC_API_KEY),
             max_tokens=max_tokens,
             temperature=temperature,
         )
@@ -114,11 +115,12 @@ class LocalModelAdapter(LLMAdapter):
 
     def chat(self, role: str, max_tokens: int, temperature: float) -> BaseChatModel:
         from langchain_openai import ChatOpenAI
+        from pydantic import SecretStr
 
-        return ChatOpenAI(
+        return ChatOpenAI(  # type: ignore[call-arg]
             model=self.model_name(role),
             base_url=self.base_url,
-            api_key=settings.LOCAL_LLM_API_KEY or "docker",
+            api_key=SecretStr(settings.LOCAL_LLM_API_KEY or "docker"),
             max_tokens=max_tokens,
             temperature=temperature,
             timeout=settings.LOCAL_LLM_TIMEOUT_SECONDS,
