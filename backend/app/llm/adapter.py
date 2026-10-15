@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import SystemMessage
 
 from app.agents.state import TokenUsage
 from app.core.config import settings
@@ -43,6 +44,10 @@ class LLMAdapter(ABC):
     @abstractmethod
     def cost_usd(self, model: str, input_tokens: int, output_tokens: int) -> float:
         """Estimated USD cost of one call."""
+
+    def system_message(self, text: str) -> SystemMessage:
+        """System prompt message. Providers may add caching hints; default is plain."""
+        return SystemMessage(content=text)
 
     def info(self) -> dict:
         """Safe-to-expose description of the active provider (no secrets)."""
@@ -77,6 +82,13 @@ class AnthropicAdapter(LLMAdapter):
             max_tokens=max_tokens,
             temperature=temperature,
         )
+
+    def system_message(self, text: str) -> SystemMessage:
+        # Anthropic prompt caching: mark the system block (incl. personality)
+        # as an ephemeral cache breakpoint.
+        return SystemMessage(content=[
+            {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}},
+        ])
 
     def cost_usd(self, model: str, input_tokens: int, output_tokens: int) -> float:
         rates = {  # USD per 1M tokens (input, output)
