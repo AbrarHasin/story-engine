@@ -56,26 +56,6 @@ def _length_guide(length: str) -> str:
     return {"short": "1–2 sentences", "medium": "3–5 sentences", "long": "6–10 sentences"}.get(length, "3–5 sentences")
 
 
-# ── Node 1: Supervisor / Router (Haiku) ───────────────────────────────────────
-
-async def supervisor_node(state: StoryState) -> dict:
-    """Classify complexity and set route. Cheap Haiku call."""
-    llm = _llm("router", max_tokens=50)
-    prompt = (
-        f"Topic: {state['topic']}\nAudience: {state['audience']}\n"
-        "Reply with JSON only: {\"route\": \"full\"} or {\"route\": \"quick\"}\n"
-        "Use 'quick' only for very simple topics (single fact, children's topic)."
-    )
-    resp = await llm.ainvoke([HumanMessage(content=prompt)])
-    try:
-        data = _json_loads(str(resp.content))
-        route = data.get("route", "full")
-    except Exception:
-        route = "full"
-
-    return {"route": route, "token_usage": [_usage(resp, "router")]}
-
-
 # ── Node 2: Personality Injector ──────────────────────────────────────────────
 
 async def personality_injector_node(state: StoryState) -> dict:
@@ -240,7 +220,9 @@ async def writer_node(state: StoryState) -> dict:
 # ── Node 8: Synthesizer / Editor (Sonnet) ────────────────────────────────────
 
 async def synthesizer_node(state: StoryState) -> dict:
-    llm = _llm("synthesizer", max_tokens=settings.MAX_TOKENS_SYNTHESIZER, temperature=0.7)
+    # The editor returns the whole story, so it must never be capped below the writer.
+    cap = max(settings.MAX_TOKENS_SYNTHESIZER, settings.MAX_TOKENS_WRITER)
+    llm = _llm("synthesizer", max_tokens=cap, temperature=0.7)
     system = (
         "You are an editor. Polish and tighten the story. "
         "Remove redundancy. Ensure tone is consistent throughout. "
@@ -255,8 +237,8 @@ async def synthesizer_node(state: StoryState) -> dict:
 
 # ── Routing function ──────────────────────────────────────────────────────────
 
-def route_after_supervisor(state: StoryState) -> list[str]:
-    """Fan-out: decide which sub-agent nodes to run in parallel."""
+def route_sections(state: StoryState) -> list[str]:
+    """Entry fan-out: decide which sub-agent nodes to run in parallel."""
     nodes = ["personality_injector", "research"]
     if state.get("include_light", True):
         nodes.append("light_side")

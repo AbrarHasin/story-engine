@@ -2,7 +2,7 @@
 Build and compile the LangGraph StateGraph.
 
 Topology:
-  supervisor
+  START
     → [personality_injector, research, light_side, dark_side, facts]  (parallel)
     → writer
     → synthesizer
@@ -11,12 +11,11 @@ Topology:
 Checkpointer: Redis (langgraph-checkpoint-redis)
 Observability: Langfuse callback injected per-run via config["callbacks"]
 """
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.redis import AsyncRedisSaver
 
 from app.agents.state import StoryState
 from app.agents.nodes import (
-    supervisor_node,
     personality_injector_node,
     research_node,
     light_side_node,
@@ -24,7 +23,7 @@ from app.agents.nodes import (
     facts_node,
     writer_node,
     synthesizer_node,
-    route_after_supervisor,
+    route_sections,
 )
 from app.core.config import settings
 
@@ -36,7 +35,6 @@ def build_graph() -> StateGraph:
     g = StateGraph(StoryState)
 
     # Register nodes
-    g.add_node("supervisor",           supervisor_node)
     g.add_node("personality_injector", personality_injector_node)
     g.add_node("research",             research_node)
     g.add_node("light_side",           light_side_node)
@@ -45,13 +43,10 @@ def build_graph() -> StateGraph:
     g.add_node("writer",               writer_node)
     g.add_node("synthesizer",          synthesizer_node)
 
-    # Entry point
-    g.set_entry_point("supervisor")
-
-    # Supervisor → parallel fan-out (conditional edges)
+    # Entry → parallel fan-out (conditional edges); no LLM router call
     g.add_conditional_edges(
-        "supervisor",
-        route_after_supervisor,
+        START,
+        route_sections,
         {
             "personality_injector": "personality_injector",
             "research":             "research",

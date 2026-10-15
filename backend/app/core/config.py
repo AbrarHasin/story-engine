@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     MAX_TOKENS_DARK: int = 250
     MAX_TOKENS_FACTS: int = 200
     MAX_TOKENS_WRITER: int = 1500
-    MAX_TOKENS_SYNTHESIZER: int = 500
+    MAX_TOKENS_SYNTHESIZER: int = 1500  # must be >= MAX_TOKENS_WRITER
 
 
 @lru_cache
