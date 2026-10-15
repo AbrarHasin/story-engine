@@ -6,6 +6,7 @@ from app.llm.adapter import (
     get_adapter,
     reset_adapter,
     extract_usage,
+    classify_llm_error,
 )
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "get_adapter",
     "reset_adapter",
     "extract_usage",
+    "classify_llm_error",
 ]

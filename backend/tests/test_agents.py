@@ -106,3 +106,70 @@ async def test_synthesizer_uses_writer_sized_cap_even_if_configured_lower():
 def test_graph_has_no_supervisor_node():
     from app.agents.graph import build_graph
     assert "supervisor" not in build_graph().nodes
+
+
+# -- LLM resilience: timeout + bounded retry, clean error classification ------
+
+def test_anthropic_chat_has_timeout_and_bounded_retries():
+    from app.core.config import settings
+    from app.llm import AnthropicAdapter
+
+    with patch.object(settings, "LLM_TIMEOUT_SECONDS", 12.0), \
+         patch.object(settings, "LLM_MAX_RETRIES", 4), \
+         patch.object(settings, "ANTHROPIC_API_KEY", "sk-test"):
+        model = AnthropicAdapter().chat("writer", 100, 0.5)
+
+    assert model.default_request_timeout == 12.0  # type: ignore[attr-defined]
+    assert model.max_retries == 4  # type: ignore[attr-defined]
+
+
+def test_local_chat_has_timeout_and_bounded_retries():
+    from app.core.config import settings
+    from app.llm import LocalModelAdapter
+
+    with patch.object(settings, "LOCAL_LLM_TIMEOUT_SECONDS", 77), \
+         patch.object(settings, "LLM_MAX_RETRIES", 3):
+        model = LocalModelAdapter().chat("writer", 100, 0.5)
+
+    assert model.request_timeout == 77  # type: ignore[attr-defined]
+    assert model.max_retries == 3  # type: ignore[attr-defined]
+
+
+def test_resilience_defaults_are_sane():
+    from app.core.config import settings
+    assert settings.LLM_TIMEOUT_SECONDS > 0
+    assert 0 <= settings.LLM_MAX_RETRIES <= 5
+
+
+def _req():
+    import httpx
+    return httpx.Request("POST", "https://example.invalid/v1/messages")
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_classify_timeout(provider):
+    import importlib
+    from app.llm.adapter import classify_llm_error
+
+    sdk = importlib.import_module(provider)
+    code, message = classify_llm_error(sdk.APITimeoutError(request=_req()))
+    assert code == "llm_timeout"
+    assert "timed out" in message
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_classify_connection_error_is_unavailable(provider):
+    import importlib
+    from app.llm.adapter import classify_llm_error
+
+    sdk = importlib.import_module(provider)
+    code, _ = classify_llm_error(sdk.APIConnectionError(request=_req()))
+    assert code == "llm_unavailable"
+
+
+def test_classify_unknown_error_does_not_leak_details():
+    from app.llm.adapter import classify_llm_error
+
+    code, message = classify_llm_error(RuntimeError("secret-dsn postgres://u:p@h/db"))
+    assert code == "internal_error"
+    assert "secret" not in message
