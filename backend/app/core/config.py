@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
     FRONTEND_URL: str = "http://localhost:5173"
+    BACKEND_PUBLIC_URL: str = "http://localhost:8080"  # public base for gateway callback URLs
     BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3001"]
 
     # Database
