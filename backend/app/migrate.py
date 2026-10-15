@@ -4,6 +4,11 @@ The deploy pipeline invokes the migrate function (Dockerfile.lambda target `migr
 before shifting the `live` alias. With DB_BACKEND=dataapi it reaches Aurora through the
 RDS Data API, so it needs no VPC. Event: {"revision": "head"} (default) or
 {"action": "current"} to report the applied revision without changing anything.
+
+As the CodeDeploy PreTraffic hook the event carries DeploymentId and
+LifecycleEventHookExecutionId: the handler migrates to head, then reports Succeeded or
+Failed with codedeploy:PutLifecycleEventHookExecutionStatus (Failed on any exception,
+after logging it), so traffic only moves to the new version after a good migration.
 """
 from __future__ import annotations
 
@@ -46,16 +51,50 @@ def upgrade(revision: str = "head") -> None:
     command.upgrade(alembic_config(), revision)
 
 
-def handler(event: dict | None, context: Any = None) -> dict:
-    """Lambda entry point (target `migrate` in Dockerfile.lambda)."""
+def _codedeploy_client() -> Any:
+    import boto3
+
+    return boto3.client("codedeploy")
+
+
+def _hook_ids(event: dict) -> tuple[str, str] | None:
+    dep, hook = event.get("DeploymentId"), event.get("LifecycleEventHookExecutionId")
+    return (str(dep), str(hook)) if dep and hook else None
+
+
+def _migrate(event: dict) -> dict:
     import asyncio
 
-    event = event or {}
     if event.get("action") == "current":
         return {"status": "ok", "revision": asyncio.run(_current_revision())}
     revision = str(event.get("revision", "head"))
     upgrade(revision)
     return {"status": "ok", "upgraded_to": revision, "revision": asyncio.run(_current_revision())}
+
+
+def handler(event: dict | None, context: Any = None) -> dict:
+    """Lambda entry point (target `migrate` in Dockerfile.lambda)."""
+    event = event or {}
+    ids = _hook_ids(event)
+    if ids is None:
+        return _migrate(event)  # manual invoke: errors propagate to the caller
+
+    deployment_id, hook_id = ids
+    try:
+        result = _migrate({"revision": "head"})
+        status = "Succeeded"
+    except Exception as exc:
+        logger.exception("Migration failed during CodeDeploy hook %s", deployment_id)
+        result = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        status = "Failed"
+
+    _codedeploy_client().put_lifecycle_event_hook_execution_status(
+        deploymentId=deployment_id,
+        lifecycleEventHookExecutionId=hook_id,
+        status=status,
+    )
+    logger.info("Reported %s to CodeDeploy deployment %s", status, deployment_id)
+    return {**result, "hook_status": status}
 
 
 if __name__ == "__main__":

@@ -108,6 +108,11 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    # Lambda: pull SecureStrings from SSM_PARAMETER_PATH into the environment first,
+    # so they are validated like any env value (env already set wins). No-op locally.
+    from app.core.ssm import load_parameters_into_env
+
+    load_parameters_into_env(Settings.model_fields)
     return Settings()
 
 
