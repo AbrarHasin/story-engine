@@ -168,6 +168,14 @@ async def _stream_generation(
     })
 
 
+async def _get_owned_story(db: AsyncSession, story_id: uuid.UUID, user: User) -> Story | None:
+    """Return the story only if it belongs to `user`; callers 404 on None (no existence leak)."""
+    story = await db.get(Story, story_id)
+    if story is None or story.user_id != user.id:
+        return None
+    return story
+
+
 def _get_langfuse_url() -> str:
     from app.core.config import settings
     return settings.LANGFUSE_HOST
@@ -242,8 +250,12 @@ async def generate_story(
 
 
 @router.get("/{story_id}", response_model=StoryResponse, summary="Get story by ID")
-async def get_story(story_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    story = await db.get(Story, story_id)
+async def get_story(
+    story_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    story = await _get_owned_story(db, story_id, user)
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
     return story
@@ -267,9 +279,13 @@ async def list_stories(
 
 
 @router.get("/{story_id}/export", summary="Export story as Markdown")
-async def export_story(story_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def export_story(
+    story_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Download the story as a .md file."""
-    story = await db.get(Story, story_id)
+    story = await _get_owned_story(db, story_id, user)
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
 
@@ -322,8 +338,12 @@ async def export_story(story_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.delete("/{story_id}", status_code=204, summary="Delete story")
-async def delete_story(story_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    story = await db.get(Story, story_id)
+async def delete_story(
+    story_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    story = await _get_owned_story(db, story_id, user)
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
     await db.delete(story)
