@@ -218,7 +218,7 @@ async def generate_story(
     ```
     """
     await enforce_rate_limit(user.id)
-    enforce_quota(user)
+    await enforce_quota(db, user)
 
     # Resolve personality (owner-scoped: 404 for unknown or foreign ids, no existence leak)
     personality_prompt: str | None = None

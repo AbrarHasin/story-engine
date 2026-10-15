@@ -43,6 +43,7 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(String(255))   # nullable for dev user / OAuth users
     plan:          Mapped[PlanTier]   = mapped_column(SAEnum(PlanTier), default=PlanTier.free)
     stories_this_month: Mapped[int] = mapped_column(Integer, default=0)
+    quota_period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     total_tokens_used:  Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime]   = mapped_column(DateTime, default=datetime.utcnow)
 
