@@ -1,0 +1,185 @@
+# Deploy Story Engine to AWS (spec 002 Option S, T030/T031).
+# MANUAL ONLY: workflow_dispatch, no push trigger. Automatic deploys on green
+# master stay off until the human approves turning them on (add `on: workflow_run`
+# for ci.yml then). The job is bound to the GitHub environment "production":
+# the AWS role trusts only that environment (infra/bootstrap.yaml), so protect it
+# with required reviewers.
+#
+# Deploy = build one arm64 image -> push to ECR -> sam deploy. Inside sam deploy,
+# CodeDeploy publishes a new story-api version, runs the migrate Lambda as the
+# PreTraffic hook (alembic upgrade head), then shifts the `live` alias. A failed
+# migration or the errors alarm rolls the alias back automatically.
+# Rollback = action "rollback": point `live` at an earlier version.
+#
+# Repo variables (Settings > Variables), all from the bootstrap stack outputs:
+#   AWS_DEPLOY_ROLE_ARN, AWS_CFN_EXEC_ROLE_ARN, ECR_REPOSITORY_URI,
+#   SAM_ARTIFACT_BUCKET, ALARM_EMAIL
+name: Deploy (AWS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: deploy, or rollback the live alias
+        type: choice
+        options: [deploy, rollback]
+        default: deploy
+      rollback_version:
+        description: "rollback only: story-api version number to point live at (empty = previous)"
+        type: string
+        required: false
+      smoke:
+        description: "curl /health on api.storyteller.* (off until the NS cutover, runbook step 7)"
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write   # OIDC to AWS, no stored keys
+  contents: read
+  actions: read     # check that CI passed on this commit
+
+concurrency:
+  group: deploy-aws-prod
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: story-engine-prod
+  API_URL: https://api.storyteller.techvigilant.com
+
+jobs:
+  deploy:
+    if: inputs.action == 'deploy'
+    name: Deploy master
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 60
+    steps:
+      - name: Only master
+        if: github.ref != 'refs/heads/master'
+        run: |
+          echo "Deploys run from master only (got ${GITHUB_REF})." >&2
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: CI must be green on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          concl=$(gh run list --workflow ci.yml --commit "$GITHUB_SHA" --status completed \
+                  --json conclusion --jq '.[0].conclusion')
+          echo "ci.yml conclusion for $GITHUB_SHA: ${concl:-none}"
+          test "$concl" = "success"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: story-engine-deploy-${{ github.run_id }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      # The Lambda runs on arm64 (Graviton); build under QEMU on the x86 runner.
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Build image
+        working-directory: infra
+        run: sam build --config-env prod
+
+      - name: Push, migrate (PreTraffic hook), shift alias
+        working-directory: infra
+        run: |
+          sam deploy --config-env prod \
+            --no-confirm-changeset \
+            --s3-bucket "${{ vars.SAM_ARTIFACT_BUCKET }}" \
+            --image-repositories "StoryApiFunction=${{ vars.ECR_REPOSITORY_URI }}" \
+            --image-repositories "MigrateFunction=${{ vars.ECR_REPOSITORY_URI }}" \
+            --role-arn "${{ vars.AWS_CFN_EXEC_ROLE_ARN }}" \
+            --parameter-overrides Stage=prod BootstrapStackName=story-engine-bootstrap \
+                                  AlarmEmail="${{ vars.ALARM_EMAIL }}"
+
+      - name: Read stack outputs
+        id: out
+        run: |
+          q() { aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+                  --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
+          echo "bucket=$(q SpaBucketName)" >> "$GITHUB_OUTPUT"
+          echo "dist=$(q SpaDistributionId)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build SPA
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: ${{ env.API_URL }}
+        run: npm ci && npm run build
+
+      - name: Upload SPA, invalidate CloudFront
+        run: |
+          b="${{ steps.out.outputs.bucket }}"
+          # Hashed assets cache for a year; index.html never.
+          aws s3 sync frontend/dist "s3://$b" --delete \
+            --exclude index.html --cache-control "public,max-age=31536000,immutable"
+          aws s3 cp frontend/dist/index.html "s3://$b/index.html" \
+            --cache-control "no-cache" --content-type "text/html"
+          aws cloudfront create-invalidation --distribution-id "${{ steps.out.outputs.dist }}" \
+            --paths "/index.html" "/"
+
+      - name: Smoke /health
+        if: inputs.smoke
+        run: |
+          for i in $(seq 1 10); do
+            # The first call after an idle period can wait ~15 s for Aurora to resume.
+            if curl -fsS --max-time 60 "$API_URL/health"; then echo; exit 0; fi
+            sleep 10
+          done
+          echo "health check failed" >&2
+          exit 1
+
+  rollback:
+    if: inputs.action == 'rollback'
+    name: Roll back live alias
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: story-engine-rollback-${{ github.run_id }}
+
+      - name: Point live at an earlier version
+        env:
+          TARGET: ${{ inputs.rollback_version }}
+        run: |
+          fn="$STACK_NAME-story-api"
+          cur=$(aws lambda get-alias --function-name "$fn" --name live --query FunctionVersion --output text)
+          if [ -z "$TARGET" ]; then
+            TARGET=$(aws lambda list-versions-by-function --function-name "$fn" \
+                       --query "Versions[?Version!='\$LATEST'].Version" --output text \
+                     | tr '\t' '\n' | sort -n | awk -v c="$cur" '$1 < c' | tail -1)
+          fi
+          test -n "$TARGET" || { echo "no earlier version than $cur" >&2; exit 1; }
+          echo "live: $cur -> $TARGET"
+          aws lambda update-alias --function-name "$fn" --name live --function-version "$TARGET"
+          echo "Schema is NOT rolled back. See docs/runbook-aws.md (Rollback)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke /health
+        if: inputs.smoke
+        run: curl -fsS --max-time 60 --retry 5 --retry-delay 10 "$API_URL/health"

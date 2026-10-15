@@ -1,0 +1,288 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Story Engine AWS bootstrap (spec 002 Option S, T007-T009, T022 zone, T036 budget).
+  Deployed ONCE by the human with an admin identity (docs/runbook-aws.md step 3),
+  never by CI. It holds what must exist before the app stack can deploy or what the
+  CI role must not be able to change about itself: GitHub OIDC trust + deploy role,
+  the CloudFormation execution role, the ECR repository, the SAM artifact bucket,
+  the Route 53 sub-zone (its NS records go into Cloudflare before the app stack's
+  ACM certificate can validate) and the account budget.
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Default: AbrarHasin/story-engine
+    Description: owner/repo allowed to assume the deploy role.
+  GitHubEnvironment:
+    Type: String
+    Default: production
+    Description: >
+      Only workflow jobs bound to this GitHub environment may assume the role
+      (OIDC sub = repo:<owner/repo>:environment:<name>). Protect the environment
+      with required reviewers in GitHub.
+  CreateOidcProvider:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: false if the account already has token.actions.githubusercontent.com.
+  ExistingOidcProviderArn:
+    Type: String
+    Default: ''
+    Description: Required when CreateOidcProvider is false.
+  AppStackName:
+    Type: String
+    Default: story-engine-prod
+    Description: Name of the app stack (infra/template.yaml) the deploy role may manage.
+  ZoneName:
+    Type: String
+    Default: storyteller.techvigilant.com
+  BudgetEmail:
+    Type: String
+    Description: Address for the $25 budget and (by convention) the app alarms.
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 25
+
+Conditions:
+  MakeOidc: !Equals [!Ref CreateOidcProvider, 'true']
+
+Resources:
+
+  # ------------------------------------------------------------ T008: OIDC
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: MakeOidc
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+
+  # CloudFormation assumes this role to create the app stack's resources, so the
+  # GitHub role itself never holds broad IAM/RDS/CloudFront rights: it can only
+  # drive CloudFormation and pass this one role (the CDK bootstrap pattern).
+  CfnExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AppStackName}-cfn-exec'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: cloudformation.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/PowerUserAccess
+      Policies:
+        - PolicyName: app-stack-iam
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # SAM names generated roles <stack>-<LogicalId>Role-<suffix>.
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:PassRole
+                Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${AppStackName}-*'
+              - Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource: '*'
+
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AppStackName}-github-deploy'
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If [MakeOidc, !Ref GitHubOidcProvider, !Ref ExistingOidcProviderArn]
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubRepo}:environment:${GitHubEnvironment}'
+      Policies:
+        - PolicyName: deploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: CloudFormationAppStack
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResource
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ListStackResources
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AppStackName}/*'
+                  - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31'
+              - Sid: ValidateTemplate
+                Effect: Allow
+                Action: cloudformation:ValidateTemplate
+                Resource: '*'
+              - Sid: PassExecutionRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CfnExecutionRole.Arn
+              - Sid: EcrAuth
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Sid: EcrPush
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:CompleteLayerUpload
+                  - ecr:DescribeImages
+                  - ecr:DescribeRepositories
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                Resource: !GetAtt ImageRepository.Arn
+              - Sid: SamArtifacts
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:ListBucket, s3:GetBucketLocation]
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub '${ArtifactBucket.Arn}/*'
+              # SPA upload: the bucket name is generated by the app stack, so
+              # scope by the stack-name prefix CloudFormation gives it.
+              - Sid: SpaUpload
+                Effect: Allow
+                Action: [s3:PutObject, s3:DeleteObject, s3:ListBucket, s3:GetObject]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:s3:::${AppStackName}-spabucket-*'
+                  - !Sub 'arn:${AWS::Partition}:s3:::${AppStackName}-spabucket-*/*'
+              - Sid: SpaInvalidate
+                Effect: Allow
+                Action: [cloudfront:CreateInvalidation, cloudfront:GetInvalidation]
+                Resource: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*'
+              # Manual rollback job (deploy.yml action=rollback): move the alias back.
+              - Sid: AliasRollback
+                Effect: Allow
+                Action:
+                  - lambda:GetAlias
+                  - lambda:UpdateAlias
+                  - lambda:ListVersionsByFunction
+                  - lambda:GetFunction
+                Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AppStackName}-*'
+
+  # ------------------------------------------------------------ T009: ECR
+  # One repository; both functions (story-api, migrate) use the same image.
+  ImageRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: story-engine
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"keep last 10 images",
+            "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+            "action":{"type":"expire"}}]}
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ObjectOwnership: BucketOwnerEnforced}]
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
+
+  # ------------------------------------------------------------ T022 (zone part)
+  # Public hosted zone, $0.50/month. Its four NS records go into Cloudflare's
+  # techvigilant.com zone (T023) BEFORE the app stack deploys: the app stack's
+  # ACM certificate validates by DNS in this zone and waits until it resolves.
+  HostedZone:
+    Type: AWS::Route53::HostedZone
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Ref ZoneName
+      HostedZoneConfig:
+        Comment: Story Engine, NS-delegated from Cloudflare techvigilant.com
+
+  # ------------------------------------------------------------ T007 / T036 budget
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: story-engine-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref BudgetEmail}]
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers: [{SubscriptionType: EMAIL, Address: !Ref BudgetEmail}]
+
+Outputs:
+  DeployRoleArn:
+    Description: GitHub repo variable AWS_DEPLOY_ROLE_ARN
+    Value: !GetAtt GitHubDeployRole.Arn
+  CfnExecutionRoleArn:
+    Description: GitHub repo variable AWS_CFN_EXEC_ROLE_ARN (sam deploy --role-arn)
+    Value: !GetAtt CfnExecutionRole.Arn
+  ImageRepositoryUri:
+    Description: GitHub repo variable ECR_REPOSITORY_URI
+    Value: !GetAtt ImageRepository.RepositoryUri
+  ArtifactBucketName:
+    Description: GitHub repo variable SAM_ARTIFACT_BUCKET
+    Value: !Ref ArtifactBucket
+  HostedZoneId:
+    Value: !Ref HostedZone
+    Export:
+      Name: !Sub '${AWS::StackName}-HostedZoneId'
+  HostedZoneNameServers:
+    Description: Put these four as NS records for "storyteller" in Cloudflare (T023)
+    Value: !Join [',', !GetAtt HostedZone.NameServers]

@@ -1,0 +1,25 @@
+version = 0.1
+
+# Story Engine app stack (infra/template.yaml), spec 002 Option S, region us-east-1 (D2).
+# Run from infra/:  sam build --config-env prod && sam deploy --config-env prod
+# Needs infra/bootstrap.yaml deployed first. The account-specific values below
+# come from that stack's outputs; CI passes them as flags from GitHub repo
+# variables, so nothing account-specific is committed here.
+#   --s3-bucket          <ArtifactBucketName>
+#   --image-repositories StoryApiFunction=<ImageRepositoryUri> MigrateFunction=<ImageRepositoryUri>
+#   --role-arn           <CfnExecutionRoleArn>
+#   --parameter-overrides AlarmEmail=<address>
+# No secrets here: secret values live in SSM SecureString (docs/runbook-aws.md).
+
+[prod.build.parameters]
+cached = true
+parallel = true
+
+[prod.deploy.parameters]
+stack_name = "story-engine-prod"
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "Stage=prod BootstrapStackName=story-engine-bootstrap"
+confirm_changeset = true
+fail_on_empty_changeset = false
+disable_rollback = false
