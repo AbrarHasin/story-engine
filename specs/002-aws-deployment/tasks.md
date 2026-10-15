@@ -7,7 +7,7 @@
 
 ## Phase 1: Setup - decisions and prod readiness (P0, both) [1.5 d]
 
-- [ ] T001 Record answers to D1-D9 in research.md R5 and the vault note
+- [x] T001 Record answers to D1-D9 in research.md R5 and the vault note (2026-10-16: S, us-east-1, Route 53, Anthropic, Langfuse local only; D6-D9 defaults)
 - [ ] T002 Merge HAG-17 `prod-config-safety` (`prod_guard`, `${VAR:?}` secrets) (`backend/app/core/prod_guard.py`)
 - [ ] T003 [P] Frontend sends the bearer token on every fetch; login works in a prod build (`frontend/src/`)
 - [ ] T004 [P] Funded Anthropic key (or Bedrock access if D4), not in git

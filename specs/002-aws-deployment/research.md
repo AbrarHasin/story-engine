@@ -38,7 +38,7 @@ Doctor-Assist. **Cost of it**: ~5.5 person-days more than Lean, most of it in th
 | Route 53 public hosted zone (alias queries free) | $0.50/zone-month | 0.50 | [AWS](https://aws.amazon.com/route53/pricing/) |
 | ECR ~1 GB, CloudWatch logs + 4 alarms | - | ~1.00 | unverified |
 | SSM Parameter Store standard, ACM, Cloudflare NS records | free | 0 | - |
-| Langfuse (Cloud Hobby or home self-host) | free | 0 | v1 |
+| Langfuse | not in AWS (D5: local only, tracing off in prod) | 0 | 2026-10-16 decision |
 | **Idle floor** (paused DB, no traffic) | | **~2.00** | |
 | **If minimum 0.5 ACU** (never pauses) | 0.5 x 730 h x $0.12 = $43.80 | **~45** | |
 
@@ -80,7 +80,7 @@ through API Gateway HTTP API + Mangum. Story Engine streams one long request per
 | 1 | Long LangGraph runs vs 15-min Lambda limit | Story ~1-2 min (unmeasured). Worst case 3 sequential stages x 60 s `LLM_TIMEOUT_SECONDS` x 3 attempts = 540 s < 900 s. A Lambda timeout skips `finally`; a `running` row then counts as in-flight in `enforce_quota`. | Lambda timeout 900 s; app deadline 600 s marks the story failed; quota ignores `running` rows older than 15 min. No Step Functions. |
 | 2 | SSE streaming | HTTP API buffers, 30 s cap. Python has no native Lambda streaming; Lambda Web Adapter + function URL `RESPONSE_STREAM` streams FastAPI ([example](https://github.com/awslabs/aws-lambda-web-adapter/blob/main/examples/fastapi-response-streaming-zip)). CloudFront origin response timeout default 30 s applies to each packet ([re:Post](https://www.repost.aws/knowledge-center/cloudfront-custom-origin-response)). `stories.py` sends no heartbeat today. | **Decided 2026-10-16:** API Gateway REST API, response transfer mode `STREAM` ([Nov 2025](https://aws.amazon.com/about-aws/whats-new/2025/11/api-gateway-response-streaming-rest-apis), [docs](https://docs.aws.amazon.com/apigateway/latest/developerguide/response-transfer-mode.html)); `: ping` every 15 s. (v2 had CloudFront `/api/*` -> function URL.) |
 | 3 | SSLCommerz IPN | OAC on a function URL requires `x-amz-content-sha256` on POST/PUT ([AWS](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-lambda.html)); SSLCommerz and the browser `POST /generate` do not send it. IPN already checks the MD5 signature and calls the validation API (`sslcommerz.py:153`). | Solved by the 2026-10-16 edge: the IPN posts to the API Gateway custom domain, no OAC and no `X-Origin-Verify` header needed. Outbound validation call works (no VPC). |
-| 4 | Langfuse hosting | Self-host needs ClickHouse 8 GiB always on (+~$105 EC2). Lambda freezes after the response, so batched traces are lost unless flushed. | D5: Cloud Hobby (amend IV) or home self-host via Tunnel. `flush()` in the stream's `finally`. |
+| 4 | Langfuse hosting | Self-host needs ClickHouse 8 GiB always on (+~$105 EC2). Lambda freezes after the response, so batched traces are lost unless flushed. | **D5 decided 2026-10-16:** Langfuse runs only locally for debugging; production on AWS runs with tracing off (no `LANGFUSE_*` keys in SSM). The `flush()` in the stream's `finally` stays harmless for local runs. |
 | 5 | Semantic cache + pgvector | Aurora PG supports pgvector. Data API has no vector/UUID types; `semantic.py:71` uses `cosine_distance`. | Keep `vector(384)` / migration 0003; shim casts `::vector`, `::uuid`; `CREATE EXTENSION vector` first. |
 | 6 | Rate limit + quota without Redis | Quota is already Postgres (`limits.py` `SELECT ... FOR UPDATE`). Redis holds only the 60 s window (fails open) and the optional checkpointer (`graph.py:85` falls back to stateless). | `rate_limit_window` table, upsert in the quota transaction; `CHECKPOINTER=none`; reserved concurrency; WAF rate rule optional (~$6+). |
 | 7 | Cold starts with MiniLM | torch => ~2 GB image, slow import. Doctor-Assist: HF download crashed on read-only FS; 1024 MB starved first inference (moved to 2048 MB). | ONNX MiniLM (fastembed) baked in, lazy-loaded only when `SEMANTIC_CACHE_ENABLED`; 2048 MB; measure p95. SnapStart for container images reported Sept 2026 ([InfoQ](https://www.infoq.com/news/2026/09/lambda-snapstart-container-image/)), unverified. |
@@ -112,7 +112,27 @@ through API Gateway HTTP API + Mangum. Story Engine streams one long request per
 
 Option 2 Managed: 13 (~16). Option S with D7 = VPC + NAT instance: ~9.5 (~11.5).
 
-## R5. Open decisions for the human
+## R5. Decisions (answered 2026-10-16, T001)
+
+All nine are answered. The human picked D1, D2, D4 and D5 explicitly and D3 earlier; D6-D9 take the
+recommended default below.
+
+| Id | Answer | Source |
+|---|---|---|
+| D1 | **Option S Serverless** | human, 2026-10-16 |
+| D2 | **us-east-1** | human, 2026-10-16 |
+| D3 | **Route 53 sub-zone** `storyteller.techvigilant.com` NS-delegated from Cloudflare; edge = API Gateway REST streaming, no nginx | human, 2026-10-16 |
+| D4 | **Anthropic API** (no Bedrock) | human, 2026-10-16 |
+| D5 | **Langfuse local only**, for debugging; production runs with tracing off; no Langfuse in AWS | human, 2026-10-16 |
+| D6 | SAM | recommended default |
+| D7 | Data API adapter (no VPC Lambda, no NAT) | recommended default |
+| D8 | Aurora minimum 0 ACU, auto-pause 300 s | recommended default |
+| D9 | ONNX MiniLM baked into the image | recommended default |
+
+Infrastructure for these answers: branch `aws-infra` (`infra/template.yaml`, `.github/workflows/deploy.yml`,
+`docs/runbook-aws.md`).
+
+### Options as presented (kept for the record)
 
 | Id | Decision | Options | Recommendation |
 |---|---|---|---|
