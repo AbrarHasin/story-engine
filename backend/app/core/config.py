@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     MODEL_SYNTHESIZER: str = "claude-sonnet-5-5"         # synthesizer/editor ($2/$10 per 1M)
     MODEL_PREMIUM: str = "claude-opus-4-6"               # premium plan only
 
+    # Quotas and rate limits (issue #9). Plan limit = completed stories per month; 0 = unlimited.
+    PLAN_LIMIT_FREE: int = 10
+    PLAN_LIMIT_PRO: int = 200
+    PLAN_LIMIT_ENTERPRISE: int = 0
+    RATE_LIMIT_PER_MINUTE: int = 5   # generate calls per user per minute; 0 disables
+
     # Semantic cache (pgvector near-duplicate lookup before generation)
     SEMANTIC_CACHE_ENABLED: bool = False
     SEMANTIC_CACHE_THRESHOLD: float = 0.92   # min cosine similarity for a hit

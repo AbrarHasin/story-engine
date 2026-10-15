@@ -195,6 +195,7 @@ class _FakeSessionFactory:
         self.story = story
         self.opened = 0
         self.commits = 0
+        self.executes = 0
 
     def __call__(self):
         self.opened += 1
@@ -208,6 +209,9 @@ class _FakeSessionFactory:
 
     async def get(self, model, pk):
         return self.story
+
+    async def execute(self, *args, **kwargs):
+        self.executes += 1
 
     async def commit(self):
         self.commits += 1
