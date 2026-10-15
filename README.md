@@ -60,6 +60,12 @@ docker compose up -d
 # 6. Docs: http://localhost:8000/docs
 ```
 
+## Architecture
+
+Seven-view architecture diagram (context, containers and request flow, LangGraph pipeline,
+data model, cost, Well-Architected review, remediation roadmap), generated from code:
+[docs/architecture/](docs/architecture/README.md). Regenerate with `make diagrams`.
+
 ## Deployment
 
 Served via Cloudflare Tunnel at `storyteller.techvigilant.com`.
