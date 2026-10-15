@@ -145,6 +145,13 @@ async def _stream_generation(
             await db.commit()
         return
 
+    # Authoritative totals: sum every node's usage from the final state
+    final_usage = final_state.get("token_usage") or []
+    if final_usage:
+        total_input  = sum(u["input_tokens"] for u in final_usage)
+        total_output = sum(u["output_tokens"] for u in final_usage)
+        total_cost   = sum(u["cost_usd"] for u in final_usage)
+
     # Persist completed story
     story = await db.get(Story, story_id)
     if story:

@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.agents.state import StoryState
-from app.agents.nodes import route_after_supervisor
+from app.agents.nodes import route_sections
 
 
 def _base_state(**kwargs) -> StoryState:
@@ -37,7 +37,7 @@ def _base_state(**kwargs) -> StoryState:
 
 def test_route_all_sections():
     state = _base_state(include_light=True, include_dark=True, include_facts=True)
-    nodes = route_after_supervisor(state)
+    nodes = route_sections(state)
     assert "research" in nodes
     assert "light_side" in nodes
     assert "dark_side" in nodes
@@ -46,7 +46,7 @@ def test_route_all_sections():
 
 def test_route_minimal():
     state = _base_state(include_light=False, include_dark=False, include_facts=False)
-    nodes = route_after_supervisor(state)
+    nodes = route_sections(state)
     assert "research" in nodes
     assert "light_side" not in nodes
     assert "dark_side" not in nodes
@@ -77,3 +77,32 @@ async def test_light_side_skipped_when_disabled():
     from app.agents.nodes import light_side_node
     result = await light_side_node(_base_state(include_light=False))
     assert result["light_bullets"] == []
+
+
+def test_synthesizer_cap_not_below_writer():
+    from app.core.config import settings
+    assert settings.MAX_TOKENS_SYNTHESIZER >= settings.MAX_TOKENS_WRITER
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_uses_writer_sized_cap_even_if_configured_lower():
+    from app.agents.nodes import synthesizer_node
+    from app.core.config import settings
+
+    mock_resp = MagicMock()
+    mock_resp.content = "full story"
+    mock_resp.usage_metadata = {"input_tokens": 10, "output_tokens": 10}
+
+    with patch.object(settings, "MAX_TOKENS_SYNTHESIZER", 100), \
+         patch("app.agents.nodes._llm") as factory:
+        llm = AsyncMock()
+        llm.ainvoke.return_value = mock_resp
+        factory.return_value = llm
+        await synthesizer_node(_base_state(story_draft="draft"))
+
+    assert factory.call_args.kwargs["max_tokens"] >= settings.MAX_TOKENS_WRITER
+
+
+def test_graph_has_no_supervisor_node():
+    from app.agents.graph import build_graph
+    assert "supervisor" not in build_graph().nodes
