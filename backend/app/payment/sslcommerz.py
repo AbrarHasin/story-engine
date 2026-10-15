@@ -120,7 +120,6 @@ async def payment_ipn(request: Request, db: AsyncSession = Depends(get_db)):
     val_id    = data.get("val_id")
     status    = data.get("status")
     amount    = float(data.get("amount", 0))
-    store_amt = float(data.get("store_amount", 0))
     verify_key= data.get("verify_sign")
     verify_str= data.get("verify_key")
 

@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
-from app.core.database import engine, Base
+from app.core.database import engine
 from app.core.observability import get_langfuse
 from app.api.v1.auth          import router as auth_router
 from app.api.v1.stories      import router as stories_router

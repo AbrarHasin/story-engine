@@ -18,7 +18,6 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from app.agents.state import StoryState, TokenUsage
 from app.core.config import settings
 from app.llm import get_adapter, extract_usage
-from app.core.observability import get_langfuse
 
 logger = logging.getLogger(__name__)
 
