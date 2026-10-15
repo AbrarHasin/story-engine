@@ -120,3 +120,43 @@ def test_json_loads_tolerant(text, expected):
 def test_json_loads_raises_on_garbage():
     with pytest.raises(ValueError):
         _json_loads("no json here at all")
+
+
+def test_anthropic_system_message_has_cache_control():
+    from app.llm.adapter import AnthropicAdapter
+    msg = AnthropicAdapter().system_message("sys + personality")
+    assert msg.content == [
+        {"type": "text", "text": "sys + personality", "cache_control": {"type": "ephemeral"}}
+    ]
+
+
+def test_local_system_message_is_plain():
+    from app.llm.adapter import LocalModelAdapter
+    assert LocalModelAdapter().system_message("hello").content == "hello"
+
+
+@pytest.mark.asyncio
+async def test_writer_node_sends_cached_system_block_on_anthropic():
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.agents.nodes import writer_node
+    from app.llm.adapter import AnthropicAdapter
+
+    resp = MagicMock()
+    resp.content = "story"
+    resp.usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+    llm = AsyncMock()
+    llm.ainvoke.return_value = resp
+    state = {
+        "topic": "t", "tonality": "neutral", "audience": "general", "length": "short",
+        "locale": "en", "include_light": True, "include_dark": True, "include_facts": True,
+        "personality_prompt": "Voice: dry", "research_bullets": [], "light_bullets": [],
+        "dark_bullets": [], "fact_bullets": [],
+    }
+    with patch("app.agents.nodes.get_adapter", return_value=AnthropicAdapter()), \
+         patch("app.agents.nodes._llm", return_value=llm):
+        await writer_node(state)  # type: ignore[arg-type]
+
+    system = llm.ainvoke.call_args.args[0][0]
+    block = system.content[0]
+    assert block["cache_control"] == {"type": "ephemeral"}
+    assert "Voice: dry" in block["text"]

@@ -13,7 +13,7 @@ import re
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 
 from app.agents.state import StoryState, TokenUsage
 from app.core.config import settings
@@ -28,6 +28,11 @@ def _llm(role: str, max_tokens: int, temperature: float = 0.3) -> BaseChatModel:
     """Provider-agnostic chat model — Claude API or local Docker model,
     depending on LLM_PROVIDER (see app.llm.adapter)."""
     return get_adapter().chat(role, max_tokens=max_tokens, temperature=temperature)
+
+
+def _system(text: str):
+    """System message with provider caching hints (no-op for local)."""
+    return get_adapter().system_message(text)
 
 
 def _usage(response: Any, role: str) -> TokenUsage:
@@ -84,7 +89,7 @@ async def research_node(state: StoryState) -> dict:
         f"Audience: {state['audience']} | Locale: {state['locale']}\n"
         "Return JSON array only."
     )
-    resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
+    resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
     try:
         bullets = _json_loads(str(resp.content))
         if not isinstance(bullets, list):
@@ -111,7 +116,7 @@ async def light_side_node(state: StoryState) -> dict:
         f"Tone: {state['tonality']} | Audience: {state['audience']}\n"
         "Return JSON array only."
     )
-    resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
+    resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
     try:
         bullets = _json_loads(str(resp.content))
     except Exception:
@@ -136,7 +141,7 @@ async def dark_side_node(state: StoryState) -> dict:
         f"Tone: {state['tonality']} | Audience: {state['audience']}\n"
         "Return JSON array only."
     )
-    resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
+    resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
     try:
         bullets = _json_loads(str(resp.content))
     except Exception:
@@ -160,7 +165,7 @@ async def facts_node(state: StoryState) -> dict:
         f"Topic: \"{state['topic']}\"\nLocale context: {state['locale']}\n"
         "Return JSON array only."
     )
-    resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
+    resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
     try:
         bullets = _json_loads(str(resp.content))
     except Exception:
@@ -213,7 +218,7 @@ async def writer_node(state: StoryState) -> dict:
         + "\n\nStructure your response as:\n"
         + "\n\n".join(structure_parts)
     )
-    resp = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=human)])
+    resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
     return {"story_draft": resp.content, "token_usage": [_usage(resp, "writer")]}
 
 
@@ -229,7 +234,7 @@ async def synthesizer_node(state: StoryState) -> dict:
         f"Language: {state['locale']}. Return the improved full story only."
     )
     resp = await llm.ainvoke([
-        SystemMessage(content=system),
+        _system(system),
         HumanMessage(content=state.get("story_draft", "")),
     ])
     return {"final_output": resp.content, "token_usage": [_usage(resp, "synthesizer")]}
