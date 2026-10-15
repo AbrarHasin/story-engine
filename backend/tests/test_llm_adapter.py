@@ -69,8 +69,10 @@ def test_anthropic_role_models_and_cost():
     assert a.model_name("router") == settings.MODEL_ROUTER
     assert a.model_name("writer") == settings.MODEL_WRITER
     assert a.model_name("unknown-role") == settings.MODEL_WRITER
-    # 1M in + 1M out at writer rates (3 + 15)
-    assert a.cost_usd(settings.MODEL_SYNTHESIZER, 1_000_000, 1_000_000) == pytest.approx(12.0)
+    # 1M in + 1M out at Haiku 5.5 rates (0.10 + 0.50); the editor runs on Haiku 5.5 too
+    assert settings.MODEL_SYNTHESIZER == "claude-haiku-5-5"
+    assert a.cost_usd(settings.MODEL_SYNTHESIZER, 1_000_000, 1_000_000) == pytest.approx(0.60)
+    assert a.cost_usd("claude-sonnet-5-5", 1_000_000, 1_000_000) == pytest.approx(12.0)
     assert a.cost_usd(settings.MODEL_WRITER, 1_000_000, 1_000_000) == pytest.approx(0.60)
 
 

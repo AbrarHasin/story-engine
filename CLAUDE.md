@@ -10,8 +10,8 @@ Frontend (React+Vite :5173)
     → LangGraph StateGraph
       → Supervisor (Haiku, cheap)
         → [Research, LightSide, DarkSide, Facts] (Haiku, parallel)
-        → Writer (Sonnet)
-        → Synthesizer (Sonnet)
+        → Writer (Haiku 5.5)
+        → Synthesizer / critic editor (Haiku 5.5)
       ← SSE stream back to client
   → Langfuse (self-hosted :3000) — full trace per story
 ```
@@ -91,9 +91,8 @@ REDIS_URL=redis://localhost:6379
 ```
 
 ## Model Tiers (token cost discipline)
-- Haiku 4.5 → supervisor, research, light, dark, facts (~$0.001/node)
-- Sonnet 4.6 → writer, synthesizer (~$0.05–0.15/call)
-- Target cost per story: ~$0.19 with caching
+- Haiku 5.5 (`claude-haiku-5-5`, thinking disabled) → research, light, dark, facts, writer, synthesizer (critic editor)
+- Modelled cost per story: ~$0.0009 typical, ~$0.0023 at token caps (not yet measured; prompt caching is a no-op, prefixes are under 512 tokens)
 
 ## Dev Constraints
 - `backend/.env` is gitignored — never commit it
