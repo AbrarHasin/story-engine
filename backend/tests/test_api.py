@@ -9,7 +9,7 @@ from app.main import app
 
 
 @pytest.fixture
-async def client():
+async def client(dev_user):
     token = create_access_token(DEV_USER_ID, "dev@storyengine.local")
     async with AsyncClient(
         transport=ASGITransport(app=app),
