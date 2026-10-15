@@ -51,6 +51,40 @@ Parameters:
     Type: Number
     Default: 4
     Description: ACU ceiling. Minimum is 0 (D8) with auto-pause after 300 s.
+  LlmProvider:
+    Type: String
+    Default: anthropic
+    AllowedValues: [anthropic, bedrock]
+    Description: >
+      LLM_PROVIDER for the app. anthropic = Claude API (D4). bedrock needs UseBedrock=true
+      and a Bedrock adapter in the app, which does not exist yet.
+  ModelRouter:
+    Type: String
+    Default: claude-haiku-5-5
+    Description: MODEL_ROUTER (research, light, dark, facts).
+  ModelWriter:
+    Type: String
+    Default: claude-haiku-5-5
+    Description: MODEL_WRITER.
+  ModelSynthesizer:
+    Type: String
+    Default: claude-haiku-5-5
+    Description: MODEL_SYNTHESIZER (critic editor, HAG-25).
+  UseBedrock:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Grant story-api bedrock:InvokeModel* (off by default; no Bedrock adapter yet).
+
+Conditions:
+  UseBedrock: !Equals [!Ref UseBedrock, 'true']
+
+Rules:
+  BedrockProviderNeedsPermission:
+    RuleCondition: !Equals [!Ref LlmProvider, bedrock]
+    Assertions:
+      - Assert: !Equals [!Ref UseBedrock, 'true']
+        AssertDescription: LlmProvider=bedrock requires UseBedrock=true.
 
 Globals:
   Function:
@@ -131,7 +165,8 @@ Resources:
   #   start (CloudFormation cannot create SecureStrings and Lambda env vars cannot
   #   use ssm-secure references; the runbook creates them). Names = Settings fields:
   #   ANTHROPIC_API_KEY, JWT_SECRET_KEY, SSLCOMMERZ_STORE_ID, SSLCOMMERZ_STORE_PASS.
-  # - database: DB_BACKEND=dataapi + AURORA_* (no DATABASE_URL, no password).
+  # - database: DB_BACKEND=dataapi + DATAAPI_* (no DATABASE_URL, no password),
+  #   names as in backend/.env.lambda.example (branch aws-app).
   # - tracing: TRACING_ENABLED=false, no LANGFUSE_* keys (D5); prod_guard must
   #   accept that instead of demanding Langfuse keys.
   StoryApiFunction:
@@ -156,12 +191,16 @@ Resources:
       Environment:
         Variables:
           APP_ENV: production
-          LLM_PROVIDER: anthropic
+          LLM_PROVIDER: !Ref LlmProvider
+          MODEL_ROUTER: !Ref ModelRouter
+          MODEL_WRITER: !Ref ModelWriter
+          MODEL_SYNTHESIZER: !Ref ModelSynthesizer
           TRACING_ENABLED: 'false'
           DB_BACKEND: dataapi
-          AURORA_CLUSTER_ARN: !GetAtt AuroraCluster.DBClusterArn
-          AURORA_SECRET_ARN: !GetAtt AuroraCluster.MasterUserSecret.SecretArn
-          AURORA_DATABASE: storyengine
+          DATAAPI_RESOURCE_ARN: !GetAtt AuroraCluster.DBClusterArn
+          DATAAPI_SECRET_ARN: !GetAtt AuroraCluster.MasterUserSecret.SecretArn
+          DATAAPI_DATABASE: storyengine
+          DATAAPI_RESUME_TIMEOUT_SECONDS: '45'
           SSM_PARAMETER_PATH: !Sub '/story-engine/${Stage}/'
           CHECKPOINTER: none
           REDIS_URL: ''
@@ -199,38 +238,49 @@ Resources:
               Condition:
                 StringEquals:
                   kms:ViaService: !Sub 'ssm.${AWS::Region}.amazonaws.com'
+        - !If
+          - UseBedrock
+          - Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:bedrock:*::foundation-model/*'
+                  - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*'
+          - !Ref AWS::NoValue
     Metadata:
-      Dockerfile: Dockerfile.lambda
+      Dockerfile: Dockerfile.lambda   # backend/Dockerfile.lambda (aws-app)
       DockerContext: ../backend
+      DockerBuildTarget: api
       DockerTag: latest
 
-  # Same image, buffered mode. Lambda Web Adapter forwards a non-HTTP event (the
-  # CodeDeploy hook event) as POST AWS_LWA_PASS_THROUGH_PATH; with RUN_MODE=migrate
-  # the app mounts only that route: alembic upgrade head over the Data API, then
-  # codedeploy:PutLifecycleEventHookExecutionStatus Succeeded/Failed.
+  # Same Dockerfile, target migrate: the AWS Lambda Python base image with handler
+  # app.migrate.handler (alembic upgrade head over the Data API). No Lambda Web Adapter.
+  # As the CodeDeploy PreTraffic hook the handler must report
+  # codedeploy:PutLifecycleEventHookExecutionStatus Succeeded/Failed when the event
+  # carries DeploymentId + LifecycleEventHookExecutionId (runbook section 9).
   # The name must start with CodeDeployHook_ for SAM's CodeDeploy service role.
   MigrateFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub 'CodeDeployHook_${AWS::StackName}-migrate'
       PackageType: Image
+      ImageConfig:
+        Command: [app.migrate.handler]
       Description: alembic upgrade head, run as the CodeDeploy PreTraffic hook
       MemorySize: 1024
       Timeout: 900
       Environment:
         Variables:
           APP_ENV: production
-          RUN_MODE: migrate
           TRACING_ENABLED: 'false'
           DB_BACKEND: dataapi
-          AURORA_CLUSTER_ARN: !GetAtt AuroraCluster.DBClusterArn
-          AURORA_SECRET_ARN: !GetAtt AuroraCluster.MasterUserSecret.SecretArn
-          AURORA_DATABASE: storyengine
+          DATAAPI_RESOURCE_ARN: !GetAtt AuroraCluster.DBClusterArn
+          DATAAPI_SECRET_ARN: !GetAtt AuroraCluster.MasterUserSecret.SecretArn
+          DATAAPI_DATABASE: storyengine
+          DATAAPI_RESUME_TIMEOUT_SECONDS: '45'
           SSM_PARAMETER_PATH: !Sub '/story-engine/${Stage}/'
-          AWS_LWA_INVOKE_MODE: buffered
-          AWS_LWA_PORT: '8080'
-          AWS_LWA_READINESS_CHECK_PATH: /health
-          AWS_LWA_PASS_THROUGH_PATH: /events
       Policies:
         - Statement:
             - Effect: Allow
@@ -257,8 +307,9 @@ Resources:
               Action: codedeploy:PutLifecycleEventHookExecutionStatus
               Resource: !Sub 'arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:${ServerlessDeploymentApplication}/*'
     Metadata:
-      Dockerfile: Dockerfile.lambda
+      Dockerfile: Dockerfile.lambda   # backend/Dockerfile.lambda (aws-app)
       DockerContext: ../backend
+      DockerBuildTarget: migrate
       DockerTag: latest
 
   StoryApiLogGroup:

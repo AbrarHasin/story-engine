@@ -51,7 +51,10 @@ def test_story_api_lambda_shape(app):
     assert env["AWS_LWA_INVOKE_MODE"] == "response_stream"
     assert env["TRACING_ENABLED"] == "false"  # D5: no Langfuse in prod
     assert not any(k.startswith("LANGFUSE") for k in env)
-    assert env["LLM_PROVIDER"] == "anthropic"  # D4
+    assert env["LLM_PROVIDER"] == {"Ref": "LlmProvider"}  # D4, default anthropic
+    for var, param in (("MODEL_ROUTER", "ModelRouter"), ("MODEL_WRITER", "ModelWriter"),
+                       ("MODEL_SYNTHESIZER", "ModelSynthesizer")):
+        assert env[var] == {"Ref": param}
     assert env["CHECKPOINTER"] == "none"
     actions = {a for st in p["Policies"][0]["Statement"] for a in
                (st["Action"] if isinstance(st["Action"], list) else [st["Action"]])}
@@ -64,7 +67,49 @@ def test_migrate_is_pretraffic_hook(app):
     assert dp["Hooks"]["PreTraffic"] == {"Ref": "MigrateFunction"}
     m = app["MigrateFunction"]["Properties"]
     assert str(m["FunctionName"]["Fn::Sub"]).startswith("CodeDeployHook_")
-    assert app["MigrateFunction"]["Metadata"] == app["StoryApiFunction"]["Metadata"]  # one image
+    api_md, mig_md = app["StoryApiFunction"]["Metadata"], app["MigrateFunction"]["Metadata"]
+    # one Dockerfile (backend/Dockerfile.lambda), two targets
+    for md in (api_md, mig_md):
+        assert md["Dockerfile"] == "Dockerfile.lambda" and md["DockerContext"] == "../backend"
+    assert api_md["DockerBuildTarget"] == "api" and mig_md["DockerBuildTarget"] == "migrate"
+    assert m["ImageConfig"]["Command"] == ["app.migrate.handler"]
+    env = m["Environment"]["Variables"]
+    assert not any(k.startswith("AWS_LWA_") for k in env) and "RUN_MODE" not in env
+
+
+def test_env_matches_app_contract(app):
+    # Names from backend/.env.lambda.example (branch aws-app, afc2db3).
+    for fn in ("StoryApiFunction", "MigrateFunction"):
+        env = app[fn]["Properties"]["Environment"]["Variables"]
+        assert env["DB_BACKEND"] == "dataapi" and env["TRACING_ENABLED"] == "false"
+        assert env["DATAAPI_RESOURCE_ARN"] == {"Fn::GetAtt": ["AuroraCluster", "DBClusterArn"]}
+        assert env["DATAAPI_SECRET_ARN"] == {
+            "Fn::GetAtt": ["AuroraCluster", "MasterUserSecret.SecretArn"]}
+        assert env["DATAAPI_DATABASE"] == "storyengine"
+        assert not any(k.startswith("AURORA_") for k in env)
+        assert "DATABASE_URL" not in env
+
+
+def test_llm_parameters_and_bedrock_off_by_default():
+    t = load("template.yaml")
+    params = t["Parameters"]
+    assert params["LlmProvider"]["Default"] == "anthropic"
+    for p in ("ModelRouter", "ModelWriter", "ModelSynthesizer"):
+        assert params[p]["Default"] == "claude-haiku-5-5"
+    assert params["UseBedrock"]["Default"] == "false"
+    assert t["Conditions"]["UseBedrock"] == {"Fn::Equals": [{"Ref": "UseBedrock"}, "true"]}
+    policies = t["Resources"]["StoryApiFunction"]["Properties"]["Policies"]
+    conditional = [p for p in policies if "Fn::If" in p]
+    assert len(conditional) == 1
+    cond, granted, otherwise = conditional[0]["Fn::If"]
+    assert cond == "UseBedrock" and otherwise == {"Ref": "AWS::NoValue"}
+    assert set(granted["Statement"][0]["Action"]) == {
+        "bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"}
+    # no Bedrock grant outside the condition, and none on the migrate function
+    unconditional = [a for p in policies if "Statement" in p for st in p["Statement"]
+                     for a in (st["Action"] if isinstance(st["Action"], list) else [st["Action"]])]
+    assert not [a for a in unconditional if a.startswith("bedrock:")]
+    assert "bedrock" not in str(t["Resources"]["MigrateFunction"]["Properties"]["Policies"])
 
 
 def test_api_streams_through_rest_api(app):

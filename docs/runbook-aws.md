@@ -96,7 +96,7 @@ Cloudflare instead of delegating the whole name.
    ```bash
    aws lambda invoke --profile story-admin --region us-east-1 \
      --function-name CodeDeployHook_story-engine-prod-migrate \
-     --payload '{"manual": true}' --cli-binary-format raw-in-base64-out /dev/stdout
+     --payload '{"revision": "head"}' --cli-binary-format raw-in-base64-out /dev/stdout
    ```
    The first call may take ~15 s while Aurora resumes. Later deploys migrate automatically.
 5. Before cutover run the workflow with `smoke` unticked: the name still points at the
@@ -193,22 +193,28 @@ leaves a final snapshot (`DeletionPolicy: Snapshot`); deletion protection is on.
 |---|---|---|
 | `APP_ENV` | `production` | prod_guard on |
 | `TRACING_ENABLED` | `false` | no Langfuse client; prod_guard must not demand `LANGFUSE_*` |
-| `LLM_PROVIDER` | `anthropic` | D4 |
+| `LLM_PROVIDER` | parameter `LlmProvider`, default `anthropic` | D4; `bedrock` also needs `UseBedrock=true` and an adapter that does not exist yet |
+| `MODEL_ROUTER`, `MODEL_WRITER`, `MODEL_SYNTHESIZER` | parameters `ModelRouter`, `ModelWriter`, `ModelSynthesizer`, default `claude-haiku-5-5` | per-role model ids |
 | `DB_BACKEND` | `dataapi` | use the Data API adapter; no `DATABASE_URL` |
-| `AURORA_CLUSTER_ARN`, `AURORA_SECRET_ARN`, `AURORA_DATABASE` | from the stack | Data API target |
+| `DATAAPI_RESOURCE_ARN`, `DATAAPI_SECRET_ARN`, `DATAAPI_DATABASE`, `DATAAPI_RESUME_TIMEOUT_SECONDS` | from the stack, `storyengine`, `45` | Data API target (names as in `backend/.env.lambda.example`) |
 | `SSM_PARAMETER_PATH` | `/story-engine/prod/` | load SecureStrings into Settings at cold start |
 | `CHECKPOINTER` | `none` | no Redis |
 | `RUN_DEADLINE_SECONDS` | `600` | app deadline under the 900 s Lambda timeout |
 | `FRONTEND_URL`, `BACKEND_PUBLIC_URL`, `BACKEND_CORS_ORIGINS` | site / api URLs | CORS and payment callbacks |
-| `AWS_LWA_INVOKE_MODE` | `response_stream` (story-api), `buffered` (migrate) | Lambda Web Adapter |
-| `AWS_LWA_PORT`, `AWS_LWA_READINESS_CHECK_PATH` | `8080`, `/health` | uvicorn port and readiness |
-| `RUN_MODE` | `migrate` (migrate only) | mount only `POST /events` |
-| `AWS_LWA_PASS_THROUGH_PATH` | `/events` (migrate only) | non-HTTP events arrive here |
+| `AWS_LWA_INVOKE_MODE` | `response_stream` (story-api only) | Lambda Web Adapter |
+| `AWS_LWA_PORT`, `AWS_LWA_READINESS_CHECK_PATH` | `8080`, `/health` (story-api only) | uvicorn port and readiness |
 
-Migrate handler (`RUN_MODE=migrate`, `POST /events`): run `alembic upgrade head` over the
-Data API. If the event has `DeploymentId` and `LifecycleEventHookExecutionId` (CodeDeploy
-hook), report `Succeeded` or `Failed` with `codedeploy:PutLifecycleEventHookExecutionStatus`;
-a manual event (`{"manual": true}`) just returns the result.
+Images: one Dockerfile, `backend/Dockerfile.lambda` (SAM `DockerContext: ../backend`).
+story-api builds target `api` (FastAPI behind the Lambda Web Adapter); migrate builds
+target `migrate` (AWS Lambda Python base image, no Web Adapter), handler
+`app.migrate.handler`.
+
+Migrate handler (`app.migrate.handler`): runs `alembic upgrade head` over the Data API;
+`{"action": "current"}` reports the applied revision. As the CodeDeploy PreTraffic hook it
+must also report `Succeeded` or `Failed` with `codedeploy:PutLifecycleEventHookExecutionStatus`
+when the event has `DeploymentId` and `LifecycleEventHookExecutionId`. **The handler on
+`aws-app` (afc2db3) does not do this yet**: until it does, a deploy waits for the hook to
+time out and rolls back. A manual invoke works today.
 
 ## 10. Monitoring
 
