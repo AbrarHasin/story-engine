@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     MODEL_SYNTHESIZER: str = "claude-sonnet-4-6"         # synthesizer/editor
     MODEL_PREMIUM: str = "claude-opus-4-6"               # premium plan only
 
+    # Semantic cache (pgvector near-duplicate lookup before generation)
+    SEMANTIC_CACHE_ENABLED: bool = False
+    SEMANTIC_CACHE_THRESHOLD: float = 0.92   # min cosine similarity for a hit
+    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"  # local, free
+    EMBEDDING_DIM: int = 384                 # must match stories.embedding (migration 0003)
+
     # Token limits per node
     MAX_TOKENS_RESEARCH: int = 300
     MAX_TOKENS_LIGHT: int = 250
