@@ -18,19 +18,21 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://storyengine:${POSTGRES_PASSWORD:-changeme}@postgres:5432/storyengine
+      APP_ENV: production  # enables the startup guard (backend/app/core/prod_guard.py)
+      LLM_PROVIDER: anthropic
+      DATABASE_URL: postgresql+asyncpg://storyengine:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/storyengine
       REDIS_URL: redis://redis:6379
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY}
       LITELLM_BASE_URL: ${LITELLM_BASE_URL:-http://localhost:4000}
-      LANGFUSE_PUBLIC_KEY: pk-lf-story-engine-dev
-      LANGFUSE_SECRET_KEY: sk-lf-story-engine-dev
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:?set LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:?set LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: http://langfuse:3000
       SSLCOMMERZ_STORE_ID: ${SSLCOMMERZ_STORE_ID:-}
       SSLCOMMERZ_STORE_PASS: ${SSLCOMMERZ_STORE_PASS:-}
       SSLCOMMERZ_SANDBOX: "false"
       FRONTEND_URL: https://storyteller.techvigilant.com
       BACKEND_CORS_ORIGINS: '["https://storyteller.techvigilant.com"]'
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-production-please}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY}
     volumes: []  # No code mount in prod
     command: >
       uvicorn app.main:app
@@ -72,7 +74,7 @@ services:
   # ── Infrastructure overrides ───────────────────────────────────────────────
   postgres:
     environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     restart: always
 
   redis:
