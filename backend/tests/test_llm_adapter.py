@@ -76,7 +76,7 @@ def test_anthropic_role_models_and_cost():
 def test_extract_usage_standard_metadata():
     resp = SimpleNamespace(usage_metadata={"input_tokens": 12, "output_tokens": 34}, response_metadata={})
     u = extract_usage(resp, "m", LocalModelAdapter())
-    assert (u.input_tokens, u.output_tokens, u.cost_usd) == (12, 34, 0.0)
+    assert (u["input_tokens"], u["output_tokens"], u["cost_usd"]) == (12, 34, 0.0)
 
 
 def test_extract_usage_openai_fallback():
@@ -85,7 +85,7 @@ def test_extract_usage_openai_fallback():
         response_metadata={"token_usage": {"prompt_tokens": 5, "completion_tokens": 7}},
     )
     u = extract_usage(resp, "m", LocalModelAdapter())
-    assert (u.input_tokens, u.output_tokens) == (5, 7)
+    assert (u["input_tokens"], u["output_tokens"]) == (5, 7)
 
 
 def test_extract_usage_anthropic_fallback_costs():
@@ -94,13 +94,13 @@ def test_extract_usage_anthropic_fallback_costs():
         response_metadata={"usage": {"input_tokens": 1_000_000, "output_tokens": 0}},
     )
     u = extract_usage(resp, settings.MODEL_ROUTER, AnthropicAdapter())
-    assert u.input_tokens == 1_000_000
-    assert u.cost_usd == pytest.approx(1.0)
+    assert u["input_tokens"] == 1_000_000
+    assert u["cost_usd"] == pytest.approx(1.0)
 
 
 def test_extract_usage_missing_metadata():
     u = extract_usage(SimpleNamespace(), "m", LocalModelAdapter())
-    assert (u.input_tokens, u.output_tokens) == (0, 0)
+    assert (u["input_tokens"], u["output_tokens"]) == (0, 0)
 
 
 @pytest.mark.parametrize(
