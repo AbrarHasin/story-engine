@@ -1,6 +1,6 @@
 # Research: Run Story Engine on AWS
 
-**Spec**: [spec.md](./spec.md) | **Date**: 2026-10-16 (v2, serverless first)
+**Spec**: [spec.md](./spec.md) | **Date**: 2026-10-16 (v2, serverless first; v2.2 adds R7 ADR split-api-graph)
 **Method**: v1 read `docker-compose*.yml`, `nginx/prod.conf`, Dockerfiles, `config.py`, `requirements.txt`,
 CI, Makefile. v2 also read `core/limits.py`, `core/database.py`, `api/v1/stories.py`, `payment/sslcommerz.py`,
 `agents/graph.py`, `cache/semantic.py`, and the Doctor-Assist cloud note (spec 008, live since 2026-07-29).
@@ -10,7 +10,7 @@ Prices by web search on 2026-10-16. No AWS account, CLI or API key was used.
 
 | Option | Shape | Verdict |
 |---|---|---|
-| S Serverless | Lambda (container, Web Adapter) behind API Gateway REST response streaming + Route 53 sub-zone + CloudFront/S3 (SPA) + Aurora Serverless v2 via Data API + SSM + ECR, GitHub OIDC, SAM | **Recommended** |
+| S Serverless | Two Lambdas split by route (`story-api` buffered, `story-graph` streaming; R7) + `migrate` (containers, Web Adapter) behind API Gateway REST response streaming + Route 53 sub-zone + CloudFront/S3 (SPA) + Aurora Serverless v2 via Data API + SSM + ECR, GitHub OIDC, SAM | **Recommended** |
 | 1 Lean | One Lightsail 8 GB host, existing compose stack, Cloudflare Tunnel | Baseline: fastest go-live |
 | 2 Managed | ECS Fargate + RDS + ElastiCache + ALB + S3/CloudFront + Secrets Manager | Not pursued: dearest and slowest at this traffic |
 | API Gateway HTTP API + Mangum (Doctor-Assist's API edge) | Buffered, 30 s integration limit | Rejected for Story Engine: no SSE |
@@ -29,7 +29,7 @@ Doctor-Assist. **Cost of it**: ~5.5 person-days more than Lean, most of it in th
 
 | Item | Rate | $/month | Source |
 |---|---|---|---|
-| Lambda arm64, ~252k GB-s (1,000 x 120 s x 2 GB + 20k x 0.3 s x 2 GB) | $0.0000133334/GB-s; 400k GB-s + 1M req free monthly | 0 (3.36 w/o free tier) | [cloudburn](https://cloudburn.io/blog/aws-lambda-pricing), [wiz](https://www.wiz.io/academy/cloud-cost/aws-lambda-cost-breakdown) |
+| Lambda arm64, ~243k GB-s (`story-graph` 1,000 x 120 s x 2 GB + `story-api` 20k x 0.3 s x 0.5 GB; R7) | $0.0000133334/GB-s; 400k GB-s + 1M req free monthly | 0 (3.24 w/o free tier; was 3.36 as one 2 GB function) | [cloudburn](https://cloudburn.io/blog/aws-lambda-pricing), [wiz](https://www.wiz.io/academy/cloud-cost/aws-lambda-cost-breakdown) |
 | Aurora Serverless v2 compute, ~90 ACU-h awake (assumption) | $0.12/ACU-h | 10.80 | [AWS Aurora pricing](https://aws.amazon.com/rds/aurora/pricing/) |
 | Aurora storage 2 GB + ~1M I/O | $0.10/GB-month, $0.20/M I/O | 0.40 | same |
 | Data API ~60k requests | $0.35 per million (<= 32 KB) | 0.02 | same |
@@ -104,13 +104,14 @@ through API Gateway HTTP API + Mangum. Story Engine streams one long request per
 | IaC / host base | 1.0 | 0.5 |
 | Data services + data move | 1.0 | 1.0 (compose) + 1.0 (data, backups) |
 | Data access adapter | 3.0 | - |
-| Compute packaging | 1.5 | - |
+| Compute packaging (incl. api/graph split, R7) | 2.0 | - |
 | Edge / frontend | 1.0 | - |
 | CI/CD | 1.0 | 1.0 |
 | Monitoring, tests, cutover, runbook | 1.5 | 1.0 |
-| **Total** | **11.5 (~14 with 20%)** | **6 (~7)** |
+| **Total** | **12 (~14.5 with 20%)** | **6 (~7)** |
 
-Option 2 Managed: 13 (~16). Option S with D7 = VPC + NAT instance: ~9.5 (~11.5).
+Option 2 Managed: 13 (~16). Option S with D7 = VPC + NAT instance: ~10 (~12). Option S was 11.5
+before ADR `split-api-graph` (R7) added 0.5 day.
 
 ## R5. Decisions (answered 2026-10-16, T001)
 
@@ -158,3 +159,40 @@ integration (no source shows the combination). Third-party only: Lambda arm64 ra
 resume time ~15 s. **Unverified**: CloudFront/S3 free tier, ECR and CloudWatch rates, NAT instance
 cost, function URL streaming size/bandwidth limits, SnapStart for container images, Data API and
 0 ACU in ap-south-1, Bedrock prices per region, real story duration on prod models.
+
+## R7. ADR split-api-graph: two Lambdas split by route (decided 2026-10-16)
+
+**Status**: accepted (human request, accepted by god 2026-10-16). Applies to Option S only.
+
+**Context**: v2 ran the whole FastAPI app as one 2048 MB / 900 s Lambda. Every login or list call
+then paid the LangGraph + ONNX cold start and the 2 GB price, and a burst of generations shared one
+concurrency pool with login and CRUD.
+
+**Decision**: two functions, chosen by route at API Gateway; no Lambda calls another.
+
+| Function | Routes | API Gateway integration | Memory / timeout | Concurrency | Image target |
+|---|---|---|---|---|---|
+| `story-api` | `ANY /{proxy+}`: auth, stories CRUD/list/export, personalities, payments + SSLCommerz IPN, LLM config, `/health` | BUFFERED | 512 MB / 30 s | account pool | `api`: no LangGraph, LLM SDKs or ONNX model (absent or lazy imports) |
+| `story-graph` | `POST /api/v1/stories/generate` (SSE) | STREAM | 2048 MB / 900 s, app deadline 600 s | reserved, e.g. 20 | `graph`: minimal FastAPI app with only the generate route; LangGraph + semantic cache (ONNX MiniLM) |
+| `migrate` | none (deploy hook) | - | unchanged | 1 | `migrate` |
+
+API Gateway REST: resource `/api/v1/stories/generate` `POST` -> `story-graph` (STREAM, more
+specific path wins); `ANY /{proxy+}` -> `story-api` (BUFFERED). JWT check, story ownership and
+quota run inside `story-graph` too, from the shared code package, so the generate route is not
+less protected than the rest.
+
+**Why**: each side gets its own memory, timeout, concurrency cap and image; CRUD cold starts no
+longer load LangGraph/ONNX; a burst of generations cannot starve login/CRUD (reserved concurrency
+also caps LLM spend and Aurora load); failures are isolated.
+
+**Alternatives rejected**:
+
+| Alternative | Why rejected |
+|---|---|
+| (a) `story-api` invokes `story-graph` (`InvokeWithResponseStream`) | Both Lambdas run for the whole story: double compute bill, extra hop and extra failure point |
+| (b) Async jobs via SQS or Step Functions | Breaks token streaming (the client would poll); more moving parts. Revisit only if background generation that survives a closed browser is wanted |
+| (c) Keep one function | Simplest, but 2048 MB / 900 s for every CRUD call, slow CRUD cold starts, shared concurrency |
+
+**Cost**: about neutral to slightly lower (CRUD at 512 MB instead of 2048 MB: ~243k instead of
+~252k GB-s/month, inside the free tier either way); one more function, still $0 idle compute.
+**Effort**: +0.5 person-day (P4 Compute packaging 1.5 -> 2.0; T019/T020 split into T019a/b, T020a/b).

@@ -1,7 +1,7 @@
 # Feature Specification: Run Story Engine on AWS
 
 **Feature Branch**: `aws-deployment-plan` (spec id `002-aws-deployment`)
-**Created**: 2026-10-16 | **Revised**: 2026-10-16 (v2, serverless first; v2.1 DNS + edge decided)
+**Created**: 2026-10-16 | **Revised**: 2026-10-16 (v2, serverless first; v2.1 DNS + edge decided; v2.2 ADR split-api-graph)
 **Status**: Draft - planning only, for the human to judge cost and effort before any build
 **Input**: "Produce a deployment architecture and a Spec Kit plan for running Story Engine on AWS, so the human can judge effort BEFORE any build work." Revision input: "Follow the Doctor-Assist serverless, cost-optimised design (vault `Projects/Doctor-Assistant/Cloud-Architecture.md`, its spec 008) as the primary candidate."
 
@@ -72,7 +72,9 @@ generation still produces a Langfuse trace. A budget alarm fires before the mont
   (600 s) fires before the Lambda timeout (900 s).
 - [OPT-S] Aurora paused: the Data API returns `DatabaseResumingException`; the app retries with
   backoff for up to 45 s.
-- [OPT-S] Concurrency cap reached: the user gets a clear 429/503, not a hung request.
+- [OPT-S] Concurrency cap reached: the user gets a clear 429/503, not a hung request. The cap is
+  reserved concurrency on `story-graph` only, so login and CRUD on `story-api` keep working during a
+  burst of generations.
 - Anthropic API without credit or unreachable: `/health` stays up; generation returns `error`.
 - Langfuse unreachable: generation still succeeds (constitution IV, degrade to no-op).
 - SSLCommerz IPN retried: payment confirmation stays idempotent.
@@ -104,7 +106,7 @@ generation still produces a Langfuse trace. A budget alarm fires before the mont
 - **FR-010**: Every generation MUST still produce a Langfuse trace (D5). [OPT-S] The trace client
   MUST be flushed before the response ends.
 - **FR-011**: The backend MUST use the real client IP behind the proxy for logs and limits.
-- **FR-012**: [OPT-S] The Lambda MUST be reachable only through the API Gateway custom domain (no
+- **FR-012**: [OPT-S] The Lambda functions MUST be reachable only through the API Gateway custom domain (no
   function URL; default `execute-api` endpoint disabled); stage throttling MUST cap request rate;
   the database MUST have no internet-reachable port. [OPT-1] No inbound port (Cloudflare Tunnel).
 - **FR-013**: [OPT-S] The per-user rate limit and monthly quota MUST work without Redis
@@ -115,11 +117,18 @@ generation still produces a Langfuse trace. A budget alarm fires before the mont
   only when `SEMANTIC_CACHE_ENABLED` is on.
 - **FR-016**: [OPT-S] Data API calls MUST retry `DatabaseResumingException`; the IAM role MUST allow
   `BeginTransaction`, `CommitTransaction`, `RollbackTransaction`, `ExecuteStatement`, `BatchExecuteStatement`.
+- **FR-017**: [OPT-S] (ADR `split-api-graph`, research.md R7) The API MUST run as two Lambda
+  functions chosen by route at API Gateway, with no Lambda-to-Lambda call: `story-graph` serves only
+  `POST /api/v1/stories/generate` (STREAM integration, 2048 MB, 900 s timeout, 600 s app deadline,
+  reserved concurrency) and `story-api` serves every other route (BUFFERED, 512 MB, 30 s). The
+  `story-api` image MUST NOT load LangGraph, the LLM SDKs or the ONNX model. `story-graph` MUST
+  enforce the same JWT check, story ownership and quota as `story-api`. Migrations stay in a separate
+  `migrate` function.
 
 ### Key Entities
 
-- **Environment**: region (D2), public host, secrets set, image digest, Lambda alias.
-- **Release**: image digest (git sha), Lambda version, migration head, deploy time, health result.
+- **Environment**: region (D2), public host, secrets set, image digests, Lambda aliases ([OPT-S] `story-api`, `story-graph`, `migrate`).
+- **Release**: image digests per target (git sha), Lambda versions, migration head, deploy time, health result.
 - **Rate limit window** [OPT-S]: user id, window start, count (replaces the Redis key).
 
 ## Success Criteria *(mandatory)*
