@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "http://localhost:3000"
+    LANGFUSE_PUBLIC_URL: str = ""   # browser-facing base for trace links; empty = LANGFUSE_HOST
 
     # SSLCommerz
     SSLCOMMERZ_STORE_ID: str = ""

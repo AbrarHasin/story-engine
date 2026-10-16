@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, Download, ExternalLink, CheckCircle2, XCircle, Loader2, Clock } from 'lucide-react'
 import { clsx } from 'clsx'
 import { apiFetch } from '@/lib/auth'
+import { bulletsFromText } from '@/lib/bullets'
 
 
 interface StoryDetail {
@@ -179,7 +180,7 @@ function SectionCard({
 }: {
   title: string; emoji: string; content: string; color: string
 }) {
-  const bullets = content.split('\n').filter(Boolean)
+  const bullets = bulletsFromText(content)
   const colorClasses: Record<string, { text: string; bg: string; border: string; dot: string }> = {
     emerald: { text: 'text-emerald-400', bg: 'bg-emerald-950/40', border: 'border-emerald-800', dot: 'bg-emerald-400' },
     rose:    { text: 'text-rose-400',    bg: 'bg-rose-950/40',    border: 'border-rose-800',    dot: 'bg-rose-400'    },
@@ -273,19 +274,19 @@ function buildMarkdown(story: StoryDetail): string {
 
   if (story.light_side) {
     lines.push('## Light Side')
-    story.light_side.split('\n').filter(Boolean).forEach(b => lines.push(`- ${b}`))
+    bulletsFromText(story.light_side).forEach(b => lines.push(`- ${b}`))
     lines.push('')
   }
 
   if (story.dark_side) {
     lines.push('## Dark Side')
-    story.dark_side.split('\n').filter(Boolean).forEach(b => lines.push(`- ${b}`))
+    bulletsFromText(story.dark_side).forEach(b => lines.push(`- ${b}`))
     lines.push('')
   }
 
   if (story.facts) {
     lines.push('## Interesting Facts')
-    story.facts.split('\n').filter(Boolean).forEach(b => lines.push(`- ${b}`))
+    bulletsFromText(story.facts).forEach(b => lines.push(`- ${b}`))
     lines.push('')
   }
 

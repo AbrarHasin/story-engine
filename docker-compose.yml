@@ -33,12 +33,15 @@ services:
     restart: unless-stopped
 
   # ── Langfuse v3 — self-hosted OSS observability ────────────────────────────
-  # Dashboard: http://localhost:3000
-  # Auto-initialized with project + API keys on first boot.
+  # Part of the default stack. Dashboard: http://localhost:3000 (bound to
+  # 127.0.0.1 only; not routed through the Cloudflare Tunnel).
+  # Headless init on first boot creates the org, project, API keys and login
+  # from backend/.env (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY,
+  # LANGFUSE_INIT_USER_EMAIL, LANGFUSE_INIT_USER_PASSWORD). Compose reads them
+  # through --env-file backend/.env, which scripts/local-up.sh passes.
   # Ref: https://github.com/langfuse/langfuse/blob/main/docker-compose.yml
 
   langfuse-db:
-    profiles: ["langfuse"]
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: langfuse
@@ -53,7 +56,6 @@ services:
       retries: 10
 
   langfuse-clickhouse:
-    profiles: ["langfuse"]
     image: clickhouse/clickhouse-server
     user: "101:101"
     environment:
@@ -71,7 +73,6 @@ services:
       start_period: 1s
 
   langfuse-redis:
-    profiles: ["langfuse"]
     image: redis:7-alpine
     command: >
       --requirepass langfuse_redis_secret
@@ -85,7 +86,6 @@ services:
       retries: 10
 
   langfuse-minio:
-    profiles: ["langfuse"]
     image: quay.io/minio/minio
     entrypoint: sh
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
@@ -93,7 +93,7 @@ services:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: miniosecret
     ports:
-      - "9090:9000"
+      - "127.0.0.1:9090:9000"
     volumes:
       - langfuse_minio_data:/data
     healthcheck:
@@ -104,7 +104,6 @@ services:
       start_period: 1s
 
   langfuse-worker:
-    profiles: ["langfuse"]
     image: langfuse/langfuse-worker:3
     depends_on: &langfuse-deps
       langfuse-db:
@@ -149,24 +148,31 @@ services:
     restart: unless-stopped
 
   langfuse:
-    profiles: ["langfuse"]
     image: langfuse/langfuse:3
     depends_on: *langfuse-deps
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       <<: *langfuse-env
       NEXTAUTH_SECRET: storyengine-langfuse-secret-32c!!
-      # Auto-init: creates org, project, user, and API keys on first boot
+      # Headless init (first boot): org, project, API keys and login. Keys and
+      # login come from backend/.env; empty values (compose run without
+      # --env-file) just skip the init, they never change existing keys.
       LANGFUSE_INIT_ORG_ID: story-engine-org
       LANGFUSE_INIT_ORG_NAME: Story Engine
       LANGFUSE_INIT_PROJECT_ID: story-engine
       LANGFUSE_INIT_PROJECT_NAME: Story Engine
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-story-engine-dev
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-story-engine-dev
-      LANGFUSE_INIT_USER_EMAIL: dev@storyengine.local
-      LANGFUSE_INIT_USER_NAME: Dev User
-      LANGFUSE_INIT_USER_PASSWORD: changeme123
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
+      LANGFUSE_INIT_USER_NAME: Story Engine Admin
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://$$(hostname):3000/api/public/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
     restart: unless-stopped
 
   # ── Story Engine Application ───────────────────────────────────────────────
@@ -181,7 +187,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://storyengine:changeme@postgres:5432/storyengine
       REDIS_URL: redis://redis:6379
-      LANGFUSE_HOST: http://langfuse:3000   # only reachable with --profile langfuse
+      LANGFUSE_HOST: http://langfuse:3000         # in-network, for sending traces
+      LANGFUSE_PUBLIC_URL: http://localhost:3000  # browser-facing, for trace links
       FRONTEND_URL: http://localhost:5173
     ports:
       - "8080:8080"

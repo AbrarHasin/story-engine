@@ -22,16 +22,55 @@ from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 from app.core.config import settings
 import logging
+import time
+import urllib.request
 
 logger = logging.getLogger(__name__)
 
 _langfuse_client: Langfuse | None = None
 
+# Reachability is cached so a down Langfuse costs one short probe per interval,
+# and is logged only when it changes (no per-request OTLP export errors).
+_REACH_TTL_S = 60.0
+_REACH_TIMEOUT_S = 1.0
+_reach_state: dict = {"ok": None, "checked": 0.0}
+
+
+def langfuse_reachable() -> bool:
+    """True if the Langfuse host answers its health endpoint (cached for _REACH_TTL_S)."""
+    now = time.monotonic()
+    if _reach_state["ok"] is not None and now - _reach_state["checked"] < _REACH_TTL_S:
+        return _reach_state["ok"]
+    url = settings.LANGFUSE_HOST.rstrip("/") + "/api/public/health"
+    try:
+        with urllib.request.urlopen(url, timeout=_REACH_TIMEOUT_S) as resp:
+            ok = resp.status < 500
+    except Exception:
+        ok = False
+    if ok != _reach_state["ok"]:
+        if ok:
+            logger.info("Langfuse reachable at %s; tracing on", settings.LANGFUSE_HOST)
+        else:
+            logger.warning("Langfuse unreachable at %s; tracing off until it answers", settings.LANGFUSE_HOST)
+    _reach_state.update(ok=ok, checked=now)
+    return ok
+
+
+def langfuse_configured() -> bool:
+    return bool(settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY)
+
 
 def get_langfuse() -> Langfuse | None:
+    """The Langfuse client, or None if not configured or not reachable.
+
+    The client is created only once the host answers: creating it installs an
+    OpenTelemetry exporter that would log an export error for every story.
+    """
     global _langfuse_client
     if _langfuse_client is None:
-        if settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY:
+        if langfuse_configured():
+            if not langfuse_reachable():
+                return None
             _langfuse_client = Langfuse(
                 public_key=settings.LANGFUSE_PUBLIC_KEY,
                 secret_key=settings.LANGFUSE_SECRET_KEY,
@@ -55,7 +94,7 @@ def get_langfuse_callback(trace_name: str, trace_id: str | None = None) -> Callb
     The user and session are attached through `langfuse_metadata` in the run config.
     """
     lf = get_langfuse()
-    if lf is None:
+    if lf is None or not langfuse_reachable():
         return None
     try:
         trace_context = {"trace_id": trace_id} if trace_id else None

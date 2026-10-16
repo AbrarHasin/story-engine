@@ -5,6 +5,7 @@ Every endpoint is browsable and testable at:
   http://localhost:8000/docs   (Swagger UI)
   http://localhost:8000/redoc  (ReDoc)
 """
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -14,7 +15,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.database import engine
-from app.core.observability import get_langfuse
+from app.core.observability import get_langfuse, langfuse_configured, langfuse_reachable
 from app.api.v1.auth          import router as auth_router
 from app.api.v1.stories      import router as stories_router
 from app.api.v1.personalities import router as personalities_router
@@ -32,11 +33,8 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Story Engine v%s", settings.APP_VERSION)
 
     # Verify Langfuse connection
-    lf = get_langfuse()
-    if lf:
-        logger.info("Langfuse connected — traces at %s", settings.LANGFUSE_HOST)
-    else:
-        logger.warning("Langfuse not configured — set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY")
+    # Logs connected / unreachable / not configured itself
+    get_langfuse()
 
     yield  # app running
 
@@ -109,9 +107,10 @@ async def health():
         checks["redis"] = f"error: {e}"
         checks["status"] = "degraded"
 
-    lf = get_langfuse()
-    if lf is None:
+    if not langfuse_configured():
         checks["langfuse"] = "not configured"
+    elif not await asyncio.to_thread(langfuse_reachable):
+        checks["langfuse"] = "unreachable"
 
     return JSONResponse(checks, status_code=200 if checks["status"] == "ok" else 207)
 
