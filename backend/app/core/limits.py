@@ -32,6 +32,27 @@ def plan_limit(plan: PlanTier) -> int:
     }[plan]
 
 
+def plan_price_bdt(plan: PlanTier) -> float:
+    """Checkout price for `plan` in BDT; the free plan costs nothing."""
+    return {
+        PlanTier.free: 0.0,
+        PlanTier.pro: settings.PLAN_PRICE_PRO_BDT,
+        PlanTier.enterprise: settings.PLAN_PRICE_ENTERPRISE_BDT,
+    }[plan]
+
+
+def stories_this_month(user: User) -> int:
+    """The user's count for the current month: 0 if the stored period is an earlier month.
+
+    Read-only view of the lazy reset that enforce_quota/record_completion apply on write,
+    so early-month displays are right before the first generation of the month.
+    """
+    period = _period_start(_utcnow())
+    if user.quota_period_start is None or user.quota_period_start < period:
+        return 0
+    return user.stories_this_month or 0
+
+
 def _utcnow() -> datetime:
     """Current UTC time; a seam so tests can freeze the clock."""
     return datetime.now(timezone.utc)

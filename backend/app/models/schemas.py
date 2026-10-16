@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import UUID
 from datetime import datetime
 from app.core.safety import check_prompt_text
-from app.models.db import StoryStatus, PlanTier
+from app.models.db import PaymentStatus, PlanTier, StoryStatus
 
 LOCALE_PATTERN = r"^[a-z]{2,3}(-[A-Za-z]{2,4})?$"
 
@@ -99,10 +99,23 @@ class PaymentInitiateResponse(BaseModel):
     amount:      float
     currency:    str = "BDT"
 
-PLAN_PRICES_BDT = {
-    PlanTier.pro:        499.0,
-    PlanTier.enterprise: 1499.0,
-}
+class PlanInfo(BaseModel):
+    id:                PlanTier
+    name:              str
+    price_bdt:         float
+    stories_per_month: int   # 0 = unlimited
+
+class PlansResponse(BaseModel):
+    currency: str = "BDT"
+    plans:    list[PlanInfo]
+
+class PaymentStatusResponse(BaseModel):
+    tran_id:      str
+    status:       PaymentStatus
+    plan:         Optional[PlanTier]
+    amount:       float
+    currency:     str
+    confirmed_at: Optional[datetime]
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

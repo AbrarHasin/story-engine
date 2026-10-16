@@ -1,10 +1,11 @@
 import { Check, CreditCard, Loader2 } from 'lucide-react'
 import { clsx } from 'clsx'
-import { useCheckout, useMe } from '@/hooks/useBilling'
-import { PLANS, canUpgrade, formatBdt, getPlan, quotaSummary, type Plan, type PlanId } from '@/lib/billing'
+import { useCheckout, useMe, usePlans } from '@/hooks/useBilling'
+import { canUpgrade, formatBdt, planName, quotaSummary, type Me, type Plan, type PlanId } from '@/lib/billing'
 
 export default function BillingPage() {
   const { data: me, isLoading, error } = useMe()
+  const plans = usePlans()
   const checkout = useCheckout()
 
   return (
@@ -26,7 +27,7 @@ export default function BillingPage() {
             Could not load your plan: {error.message}
           </div>
         )}
-        {me && <CurrentPlan plan={me.plan} storiesThisMonth={me.stories_this_month} />}
+        {me && <CurrentPlan me={me} plans={plans.data} />}
       </section>
 
       {/* Plans */}
@@ -37,20 +38,41 @@ export default function BillingPage() {
             Checkout could not start: {checkout.error.message}
           </div>
         )}
-        <div className="grid gap-3 sm:grid-cols-3">
-          {PLANS.map((plan) => (
-            <PlanCard
-              key={plan.id}
-              plan={plan}
-              current={me?.plan}
-              busy={checkout.isPending && checkout.variables === plan.id}
-              disabled={!me || checkout.isPending}
-              onUpgrade={() => {
-                if (me && canUpgrade(me.plan, plan.id)) checkout.mutate(plan.id)
-              }}
-            />
-          ))}
-        </div>
+        {plans.isLoading && (
+          <div className="text-slate-500 text-sm flex items-center gap-2" data-testid="plans-loading">
+            <Loader2 size={14} className="animate-spin" />
+            Loading plans...
+          </div>
+        )}
+        {plans.error && (
+          <div className="card border-rose-700 bg-rose-950/40 text-rose-300 text-sm" role="alert">
+            Could not load plans: {plans.error.message}{' '}
+            <button
+              type="button"
+              className="underline hover:text-rose-200"
+              onClick={() => void plans.refetch()}
+              disabled={plans.isFetching}
+            >
+              {plans.isFetching ? 'Retrying...' : 'Try again'}
+            </button>
+          </div>
+        )}
+        {plans.data && (
+          <div className="grid gap-3 sm:grid-cols-3">
+            {plans.data.map((plan) => (
+              <PlanCard
+                key={plan.id}
+                plan={plan}
+                current={me?.plan}
+                busy={checkout.isPending && checkout.variables === plan.id}
+                disabled={!me || checkout.isPending}
+                onUpgrade={() => {
+                  if (me && canUpgrade(me.plan, plan.id)) checkout.mutate(plan.id)
+                }}
+              />
+            ))}
+          </div>
+        )}
         <p className="text-xs text-slate-500 mt-3">
           Payments go through SSLCommerz. Prices are per month in Bangladeshi Taka. Your plan changes once
           SSLCommerz confirms the payment, usually within a minute.
@@ -60,15 +82,18 @@ export default function BillingPage() {
   )
 }
 
-function CurrentPlan({ plan, storiesThisMonth }: { plan: PlanId; storiesThisMonth: number }) {
-  const q = quotaSummary(plan, storiesThisMonth)
+function CurrentPlan({ me, plans }: { me: Me; plans: Plan[] | undefined }) {
+  const q = quotaSummary(me.stories_this_month, me.plan_limit)
+  const price = plans?.find((p) => p.id === me.plan)?.priceBdt
   return (
     <div className="card">
       <div className="flex items-baseline justify-between gap-3">
         <div className="text-lg font-semibold text-slate-100" data-testid="current-plan">
-          {getPlan(plan).name}
+          {planName(me.plan, plans)}
         </div>
-        <div className="text-sm text-slate-400">{formatBdt(getPlan(plan).priceBdt)}{plan !== 'free' && ' / month'}</div>
+        {price !== undefined && (
+          <div className="text-sm text-slate-400">{formatBdt(price)}{price > 0 && ' / month'}</div>
+        )}
       </div>
       <div className="mt-4 text-sm text-slate-300" data-testid="quota">
         {q.unlimited

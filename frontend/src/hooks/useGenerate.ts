@@ -7,6 +7,7 @@
  */
 import { useGenerationStore } from '@/stores/generationStore'
 import { apiFetch } from '@/lib/auth'
+import { describeGenerateFailure } from '@/lib/billing'
 
 export interface GenerateRequest {
   topic: string
@@ -45,7 +46,9 @@ export function useGenerate() {
 
     if (!resp.ok || !resp.body) {
       const text = await resp.text().catch(() => resp.statusText)
-      store.setError(`HTTP ${resp.status}: ${text}`)
+      // 402 = monthly plan limit reached: show the server's detail with a link to /billing.
+      const failure = describeGenerateFailure(resp.status, text)
+      store.setError(failure.message, failure.upgrade ? 'upgrade' : null)
       return
     }
 

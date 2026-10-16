@@ -18,7 +18,10 @@ from app.core.auth import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.db import Payment, PaymentStatus, PlanTier, User, utcnow
-from app.models.schemas import PaymentInitiateRequest, PaymentInitiateResponse, PLAN_PRICES_BDT
+from app.core.limits import plan_limit, plan_price_bdt
+from app.models.schemas import (
+    PaymentInitiateRequest, PaymentInitiateResponse, PaymentStatusResponse, PlanInfo, PlansResponse,
+)
 
 router = APIRouter(prefix="/payment", tags=["Payment"])
 logger = logging.getLogger(__name__)
@@ -75,6 +78,34 @@ def _signature_valid(data: dict) -> bool:
     return hmac.compare_digest(expected, str(verify_sign).lower())
 
 
+@router.get("/plans", response_model=PlansResponse, summary="Plan catalogue: prices and monthly limits")
+async def list_plans():
+    """Public. Prices and limits come from settings (PLAN_PRICE_*_BDT, PLAN_LIMIT_*); 0 stories = unlimited."""
+    return PlansResponse(plans=[
+        PlanInfo(id=p, name=p.value.capitalize(), price_bdt=plan_price_bdt(p), stories_per_month=plan_limit(p))
+        for p in (PlanTier.free, PlanTier.pro, PlanTier.enterprise)
+    ])
+
+
+@router.get("/status/{tran_id}", response_model=PaymentStatusResponse, summary="Status of one of my payments")
+async def payment_status(
+    tran_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Owner-scoped: 404 for unknown or foreign transactions (no existence leak).
+
+    Read-only; the plan is upgraded only by the signed IPN.
+    """
+    payment = (await db.execute(select(Payment).where(Payment.tran_id == tran_id))).scalar_one_or_none()
+    if payment is None or payment.user_id != user.id:
+        raise HTTPException(404, "Payment not found")
+    return PaymentStatusResponse(
+        tran_id=payment.tran_id, status=payment.status, plan=payment.plan,
+        amount=payment.amount, currency=payment.currency or "BDT", confirmed_at=payment.confirmed_at,
+    )
+
+
 @router.post(
     "/initiate",
     response_model=PaymentInitiateResponse,
@@ -89,14 +120,12 @@ async def initiate_payment(
     Create a payment session with SSLCommerz and return the payment URL.
     Redirect the user to `payment_url` to complete payment.
 
-    Plans:
-    - pro        → BDT 499/month
-    - enterprise → BDT 1,499/month
+    Prices come from PLAN_PRICE_*_BDT settings (see GET /payment/plans).
     """
     if body.plan == PlanTier.free:
         raise HTTPException(400, "Free plan requires no payment")
 
-    amount = PLAN_PRICES_BDT[body.plan]
+    amount = plan_price_bdt(body.plan)
     tran_id = f"SE-{uuid.uuid4().hex[:16].upper()}"
     backend_base = settings.BACKEND_PUBLIC_URL.rstrip("/")
 
