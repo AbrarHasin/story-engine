@@ -1,0 +1,8 @@
+# Opt-in local LLM (Docker Model Runner, gemma). Use with LLM_PROVIDER=local in backend/.env:
+#   docker compose -f docker-compose.yml -f docker-compose.gemma.yml up -d
+services:
+  backend:
+    models:
+      gemma:
+        endpoint_var: LOCAL_LLM_BASE_URL
+        model_var: LOCAL_LLM_MODEL

@@ -38,6 +38,7 @@ services:
   # Ref: https://github.com/langfuse/langfuse/blob/main/docker-compose.yml
 
   langfuse-db:
+    profiles: ["langfuse"]
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: langfuse
@@ -52,6 +53,7 @@ services:
       retries: 10
 
   langfuse-clickhouse:
+    profiles: ["langfuse"]
     image: clickhouse/clickhouse-server
     user: "101:101"
     environment:
@@ -69,6 +71,7 @@ services:
       start_period: 1s
 
   langfuse-redis:
+    profiles: ["langfuse"]
     image: redis:7-alpine
     command: >
       --requirepass langfuse_redis_secret
@@ -82,6 +85,7 @@ services:
       retries: 10
 
   langfuse-minio:
+    profiles: ["langfuse"]
     image: quay.io/minio/minio
     entrypoint: sh
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
@@ -100,6 +104,7 @@ services:
       start_period: 1s
 
   langfuse-worker:
+    profiles: ["langfuse"]
     image: langfuse/langfuse-worker:3
     depends_on: &langfuse-deps
       langfuse-db:
@@ -144,6 +149,7 @@ services:
     restart: unless-stopped
 
   langfuse:
+    profiles: ["langfuse"]
     image: langfuse/langfuse:3
     depends_on: *langfuse-deps
     ports:
@@ -167,54 +173,53 @@ services:
 
   backend:
     build: ./backend
-    models:
-      gemma:
-        # Docker Model Runner injects the OpenAI-compatible endpoint + model id
-        endpoint_var: LOCAL_LLM_BASE_URL
-        model_var: LOCAL_LLM_MODEL
-    ports:
-      - "8000:8000"
+    # Secrets and the LLM choice come from backend/.env (gitignored). Only the
+    # in-network addresses are set here; nothing overrides LLM_PROVIDER or keys.
+    env_file:
+      - path: ./backend/.env
+        required: true
     environment:
       DATABASE_URL: postgresql+asyncpg://storyengine:changeme@postgres:5432/storyengine
       REDIS_URL: redis://redis:6379
-      # LLM provider: "local" = Docker Model Runner (gemma4), "anthropic" = Claude API
-      LLM_PROVIDER: ${LLM_PROVIDER:-local}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      LITELLM_BASE_URL: ${LITELLM_BASE_URL:-http://localhost:4000}
-      LANGFUSE_PUBLIC_KEY: pk-lf-story-engine-dev
-      LANGFUSE_SECRET_KEY: sk-lf-story-engine-dev
-      LANGFUSE_HOST: http://langfuse:3000
-      SSLCOMMERZ_STORE_ID: ${SSLCOMMERZ_STORE_ID:-}
-      SSLCOMMERZ_STORE_PASS: ${SSLCOMMERZ_STORE_PASS:-}
-      SSLCOMMERZ_SANDBOX: ${SSLCOMMERZ_SANDBOX:-true}
+      LANGFUSE_HOST: http://langfuse:3000   # only reachable with --profile langfuse
       FRONTEND_URL: http://localhost:5173
-      BACKEND_CORS_ORIGINS: '["http://localhost:5173","http://localhost:3001"]'
+    ports:
+      - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./backend:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # Migrations run on every start (idempotent), then the API.
+    command: sh -c "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
     restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: dev
     ports:
       - "5173:5173"
     environment:
-      VITE_API_BASE_URL: http://localhost:8000
+      # Vite proxies /api and /health to the backend container; the browser
+      # uses relative URLs, so this also works behind the Cloudflare Tunnel.
+      API_PROXY_TARGET: http://backend:8080
       VITE_LANGFUSE_HOST: http://localhost:3000
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    command: npm run dev -- --host
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
 # ── Local LLM: Docker Model Runner (requires Docker Desktop 4.41+ / DMR enabled)
+# Not used by default. To run on gemma, set LLM_PROVIDER=local in backend/.env
+# and add the override: docker compose -f docker-compose.yml -f docker-compose.gemma.yml up -d
+# (top-level models cannot take a compose profile, so gemma is an override file).
 models:
   gemma:
     # Gemma 3 4B — text-only, no multimodal projector issues
