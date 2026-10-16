@@ -43,6 +43,7 @@ services:
 
   langfuse-db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: langfuse
       POSTGRES_USER: langfuse
@@ -57,6 +58,7 @@ services:
 
   langfuse-clickhouse:
     image: clickhouse/clickhouse-server
+    restart: unless-stopped
     user: "101:101"
     environment:
       CLICKHOUSE_DB: default
@@ -74,6 +76,7 @@ services:
 
   langfuse-redis:
     image: redis:7-alpine
+    restart: unless-stopped
     command: >
       --requirepass langfuse_redis_secret
       --maxmemory-policy noeviction
@@ -87,6 +90,7 @@ services:
 
   langfuse-minio:
     image: quay.io/minio/minio
+    restart: unless-stopped
     entrypoint: sh
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
     environment:
