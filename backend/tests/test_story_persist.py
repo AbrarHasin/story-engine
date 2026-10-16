@@ -138,3 +138,14 @@ def test_langfuse_unreachable_disables_callback_and_logs_once(monkeypatch, caplo
         assert observability.get_langfuse_callback("t") is None
         assert observability.get_langfuse_callback("t") is None
     assert sum("unreachable" in r.message for r in caplog.records) == 1
+
+
+def test_langfuse_client_not_created_while_unreachable(monkeypatch):
+    """Creating the client installs an OTLP exporter, so it must wait for the host."""
+    monkeypatch.setattr(observability.settings, "LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setattr(observability.settings, "LANGFUSE_SECRET_KEY", "sk-test")
+    monkeypatch.setattr(observability.settings, "LANGFUSE_HOST", "http://127.0.0.1:9")
+    monkeypatch.setattr(observability, "_reach_state", {"ok": None, "checked": 0.0})
+    monkeypatch.setattr(observability, "_langfuse_client", None)
+    assert observability.get_langfuse() is None
+    assert observability._langfuse_client is None

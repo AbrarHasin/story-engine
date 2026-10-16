@@ -56,10 +56,21 @@ def langfuse_reachable() -> bool:
     return ok
 
 
+def langfuse_configured() -> bool:
+    return bool(settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY)
+
+
 def get_langfuse() -> Langfuse | None:
+    """The Langfuse client, or None if not configured or not reachable.
+
+    The client is created only once the host answers: creating it installs an
+    OpenTelemetry exporter that would log an export error for every story.
+    """
     global _langfuse_client
     if _langfuse_client is None:
-        if settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY:
+        if langfuse_configured():
+            if not langfuse_reachable():
+                return None
             _langfuse_client = Langfuse(
                 public_key=settings.LANGFUSE_PUBLIC_KEY,
                 secret_key=settings.LANGFUSE_SECRET_KEY,
