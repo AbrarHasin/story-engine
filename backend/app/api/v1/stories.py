@@ -26,7 +26,7 @@ from app.core.auth import get_current_user
 from app.core.limits import enforce_quota, enforce_rate_limit, record_completion
 from app.models.schemas import StoryGenerateRequest, StoryResponse
 from app.models.db import Story, StoryStatus, Personality, User
-from app.agents.graph import get_compiled_graph, get_redis_checkpointer
+from app.agents.graph import CheckpointerUnavailable, get_compiled_graph, get_redis_checkpointer
 from app.agents.state import StoryState
 
 router = APIRouter(prefix="/stories", tags=["Stories"])
@@ -52,8 +52,16 @@ def _sse(event: str, data: dict) -> str:
 
 
 def _utcnow() -> datetime:
-    """Current UTC time as naive UTC, matching the TIMESTAMP WITHOUT TIME ZONE columns."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    """Current UTC time, timezone-aware, matching the TIMESTAMP WITH TIME ZONE columns."""
+    return datetime.now(timezone.utc)
+
+
+async def _mark_failed(story_id: uuid.UUID) -> None:
+    async with SessionLocal() as session:
+        story = await session.get(Story, story_id)
+        if story:
+            story.status = StoryStatus.failed
+            await session.commit()
 
 
 async def _stream_generation(
@@ -68,7 +76,15 @@ async def _stream_generation(
     never touches it: it opens its own short-lived sessions instead.
     """
 
-    graph = await _get_graph()
+    try:
+        graph = await _get_graph()
+    except CheckpointerUnavailable:
+        # T3: required checkpointer is down; fail the story visibly, not stateless.
+        await _mark_failed(story_id)
+        yield _sse("error", {"code": "checkpointer_unavailable",
+                             "message": "Story state store is unavailable; try again shortly.",
+                             "story_id": str(story_id)})
+        return
     run_id = str(uuid.uuid4())
 
     # Build initial state
@@ -166,11 +182,7 @@ async def _stream_generation(
         code, message = classify_llm_error(e)
 
         # Mark story failed before emitting, so a client disconnect can't skip it
-        async with SessionLocal() as session:
-            story = await session.get(Story, story_id)
-            if story:
-                story.status = StoryStatus.failed
-                await session.commit()
+        await _mark_failed(story_id)
 
         yield _sse("error", {"code": code, "message": message, "story_id": str(story_id)})
         return

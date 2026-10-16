@@ -13,8 +13,12 @@ import enum
 
 
 def utcnow() -> datetime:
-    """Current UTC time as naive UTC, matching the TIMESTAMP WITHOUT TIME ZONE columns."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    """Current UTC time as a timezone-aware datetime.
+
+    Every timestamp column is TIMESTAMP WITH TIME ZONE (migration 0005), so
+    write paths must pass aware datetimes; asyncpg rejects naive/aware mixing.
+    """
+    return datetime.now(timezone.utc)
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
@@ -50,7 +54,7 @@ class User(Base):
     stories_this_month: Mapped[int] = mapped_column(Integer, default=0)
     quota_period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     total_tokens_used:  Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime]   = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=utcnow)
 
     personalities: Mapped[list["Personality"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     stories:       Mapped[list["Story"]]       = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -71,8 +75,8 @@ class Personality(Base):
     banned_words: Mapped[list]       = mapped_column(JSON, default=list)
     locale:       Mapped[str]        = mapped_column(String(10), default="en")
     is_default:   Mapped[bool]       = mapped_column(Boolean, default=False)
-    created_at:   Mapped[datetime]   = mapped_column(DateTime, default=utcnow)
-    updated_at:   Mapped[datetime]   = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at:   Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at:   Mapped[datetime]   = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     user: Mapped["User"] = relationship(back_populates="personalities")
 
@@ -107,8 +111,8 @@ class Story(Base):
     tokens_output:   Mapped[int]         = mapped_column(Integer, default=0)
     cost_usd:        Mapped[float]       = mapped_column(Float, default=0.0)
     langgraph_run_id:Mapped[str | None]  = mapped_column(String(255))   # for Langfuse trace link
-    created_at:      Mapped[datetime]    = mapped_column(DateTime, default=utcnow)
-    completed_at:    Mapped[datetime | None] = mapped_column(DateTime)
+    created_at:      Mapped[datetime]    = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at:    Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # pgvector embedding for semantic cache / RAG
     embedding:       Mapped[list | None] = mapped_column(Vector(384))
@@ -130,7 +134,7 @@ class Payment(Base):
     plan:           Mapped[PlanTier]     = mapped_column(SAEnum(PlanTier))
     status:         Mapped[PaymentStatus]= mapped_column(SAEnum(PaymentStatus), default=PaymentStatus.initiated)
     ipn_payload:    Mapped[dict | None]  = mapped_column(JSON)
-    created_at:     Mapped[datetime]     = mapped_column(DateTime, default=utcnow)
-    confirmed_at:   Mapped[datetime | None] = mapped_column(DateTime)
+    created_at:     Mapped[datetime]     = mapped_column(DateTime(timezone=True), default=utcnow)
+    confirmed_at:   Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped["User"] = relationship(back_populates="payments")

@@ -75,12 +75,34 @@ async def get_compiled_graph(checkpointer=None):
     return g.compile()
 
 
+class CheckpointerUnavailable(RuntimeError):
+    """Redis checkpointer is required (CHECKPOINTER_REQUIRED / production) but unreachable."""
+
+
+# Last result of get_redis_checkpointer(), reported by /health:
+# "not_initialised" until the first generation, then "ok" or "unavailable".
+checkpointer_status: dict[str, str | None] = {"status": "not_initialised", "error": None}
+
+
+def checkpointer_required() -> bool:
+    return settings.CHECKPOINTER_REQUIRED or settings.APP_ENV.lower() in ("production", "prod")
+
+
 async def get_redis_checkpointer():
-    """Create async Redis checkpointer for LangGraph state persistence."""
+    """Create async Redis checkpointer for LangGraph state persistence.
+
+    Never silent (T3): a failure is logged at ERROR, recorded for /health, and
+    raises CheckpointerUnavailable when a checkpointer is required.
+    """
     try:
         saver = AsyncRedisSaver.from_conn_string(settings.REDIS_URL)
         await saver.asetup()
-        return saver
     except Exception as e:
-        logger.warning("Redis checkpointer unavailable (%s) — running stateless", e)
+        checkpointer_status.update(status="unavailable", error=type(e).__name__)
+        if checkpointer_required():
+            logger.error("Redis checkpointer unavailable (%s) and required: refusing to run stateless", e)
+            raise CheckpointerUnavailable(str(e)) from e
+        logger.error("Redis checkpointer unavailable (%s): runs are STATELESS (no checkpoints)", e)
         return None
+    checkpointer_status.update(status="ok", error=None)
+    return saver

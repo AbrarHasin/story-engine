@@ -17,6 +17,7 @@ from langchain_core.messages import HumanMessage
 
 from app.agents.state import StoryState, TokenUsage
 from app.core.config import settings
+from app.core.safety import UNTRUSTED_NOTE, filter_bullets, filter_output
 from app.llm import get_adapter, extract_usage
 
 logger = logging.getLogger(__name__)
@@ -31,8 +32,12 @@ def _llm(role: str, max_tokens: int, temperature: float = 0.3) -> BaseChatModel:
 
 
 def _system(text: str):
-    """System message with provider caching hints (no-op for local)."""
-    return get_adapter().system_message(text)
+    """System message with provider caching hints (no-op for local).
+
+    Every system prompt ends with the untrusted-input note (T4): the topic and
+    personality text inside the prompts come from the user.
+    """
+    return get_adapter().system_message(f"{text}\n{UNTRUSTED_NOTE}")
 
 
 def _usage(response: Any, role: str) -> TokenUsage:
@@ -91,11 +96,13 @@ BULLETS_MAX = 5
 
 
 def _counted(bullets: list[str], node: str, minimum: int = BULLETS_MIN) -> list[str]:
-    """Enforce the prompt's bullet count: keep at most BULLETS_MAX items.
+    """Filter each bullet (T4), then enforce the prompt's bullet count: keep at
+    most BULLETS_MAX items.
 
     A short list cannot be padded without another (paid) call, so it is kept
     and logged instead.
     """
+    bullets = filter_bullets(bullets)
     if len(bullets) > BULLETS_MAX:
         logger.info("%s returned %d bullets; keeping the first %d", node, len(bullets), BULLETS_MAX)
         bullets = bullets[:BULLETS_MAX]
@@ -252,7 +259,7 @@ async def writer_node(state: StoryState) -> dict:
         + "\n\n".join(structure_parts)
     )
     resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
-    return {"story_draft": resp.content, "token_usage": [_usage(resp, "writer")]}
+    return {"story_draft": filter_output(str(resp.content)), "token_usage": [_usage(resp, "writer")]}
 
 
 # ── Node 8: Synthesizer / Critic Editor (Haiku 5.5) ──────────────────────────
@@ -266,7 +273,7 @@ async def synthesizer_node(state: StoryState) -> dict:
         _system(system),
         HumanMessage(content=state.get("story_draft", "")),
     ])
-    return {"final_output": resp.content, "token_usage": [_usage(resp, "synthesizer")]}
+    return {"final_output": filter_output(str(resp.content)), "token_usage": [_usage(resp, "synthesizer")]}
 
 
 def _critic_editor_prompt(state: StoryState) -> str:
