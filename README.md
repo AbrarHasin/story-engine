@@ -52,13 +52,29 @@ cd story-engine
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
 
-# 3. Start full stack
-docker compose up -d
+# 3. Start the stack (builds, migrates, waits for /health)
+scripts/local-up.sh
 
-# 4. Backend: http://localhost:8000
+# 4. Backend: http://localhost:8080
 # 5. Frontend: http://localhost:5173
-# 6. Docs: http://localhost:8000/docs
+# 6. Docs: http://localhost:8080/docs
 ```
+
+### Local stack in Docker
+
+| Command | What it does |
+|---|---|
+| `scripts/local-up.sh` | Build and start postgres, redis, backend (:8080) and frontend (:5173); the backend runs `alembic upgrade head` on start |
+| `scripts/local-down.sh` | Stop and remove the containers; data volumes and images are kept |
+| `scripts/local-down.sh --destroy` | Also delete the data volumes (database included) and the images compose built |
+
+- The backend reads `backend/.env` (`LLM_PROVIDER`, `ANTHROPIC_API_KEY`, ...); compose only sets the
+  in-network `DATABASE_URL` and `REDIS_URL`.
+- Langfuse is optional: `COMPOSE_PROFILES=langfuse scripts/local-up.sh` (dashboard on :3000).
+- Local gemma via Docker Model Runner: set `LLM_PROVIDER=local` in `backend/.env`, then
+  `docker compose -f docker-compose.yml -f docker-compose.gemma.yml up -d`.
+- The old host services (`story-backend`, `story-frontend` systemd user units) are disabled; to go
+  back: `scripts/local-down.sh && systemctl --user enable --now story-backend story-frontend`.
 
 ## Deployment
 
