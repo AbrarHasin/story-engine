@@ -6,12 +6,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# Include the optional profile so its containers stop too if they were started.
 if [[ "${1:-}" == "--destroy" ]]; then
-  docker compose --profile langfuse down --volumes --rmi local --remove-orphans
-  echo "Destroyed: containers, volumes and locally built images."
+  docker compose down --volumes --rmi local --remove-orphans
+  echo "Destroyed: containers, volumes (incl. Langfuse's) and locally built images."
 elif [[ -z "${1:-}" ]]; then
-  docker compose --profile langfuse down --remove-orphans
+  docker compose down --remove-orphans
   echo "Stopped. Data volumes kept; start again with scripts/local-up.sh"
 else
   echo "usage: $0 [--destroy]" >&2

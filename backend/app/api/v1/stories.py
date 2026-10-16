@@ -223,7 +223,7 @@ async def _get_owned_story(db: AsyncSession, story_id: uuid.UUID, user: User) ->
 
 def _get_langfuse_url() -> str:
     from app.core.config import settings
-    return settings.LANGFUSE_HOST
+    return (settings.LANGFUSE_PUBLIC_URL or settings.LANGFUSE_HOST).rstrip("/")
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────

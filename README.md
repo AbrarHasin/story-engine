@@ -64,13 +64,26 @@ scripts/local-up.sh
 
 | Command | What it does |
 |---|---|
-| `scripts/local-up.sh` | Build and start postgres, redis, backend (:8080) and frontend (:5173); the backend runs `alembic upgrade head` on start |
+| `scripts/local-up.sh` | Build and start postgres, redis, backend (:8080), frontend (:5173) and Langfuse (:3000); the backend runs `alembic upgrade head` on start |
 | `scripts/local-down.sh` | Stop and remove the containers; data volumes and images are kept |
-| `scripts/local-down.sh --destroy` | Also delete the data volumes (database included) and the images compose built |
+| `scripts/local-down.sh --destroy` | Also delete the data volumes (database and Langfuse included) and the images compose built |
 
 - The backend reads `backend/.env` (`LLM_PROVIDER`, `ANTHROPIC_API_KEY`, ...); compose only sets the
-  in-network `DATABASE_URL` and `REDIS_URL`.
-- Langfuse is optional: `COMPOSE_PROFILES=langfuse scripts/local-up.sh` (dashboard on :3000).
+  in-network `DATABASE_URL`, `REDIS_URL` and `LANGFUSE_HOST` (`http://langfuse:3000`).
+- Langfuse runs by default. Host ports, bound to 127.0.0.1 only (not exposed through the tunnel):
+
+  | Port | Service |
+  |---|---|
+  | 3000 | Langfuse web UI and API (traces: http://localhost:3000/project/story-engine/traces) |
+  | 9090 | Langfuse MinIO (S3 API) |
+
+  Its Postgres, ClickHouse and Redis have no host ports. On first boot Langfuse creates the org,
+  the `story-engine` project, the API keys `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` and the
+  login `LANGFUSE_INIT_USER_EMAIL` / `LANGFUSE_INIT_USER_PASSWORD`, all read from `backend/.env`
+  (`local-up.sh` passes it as `--env-file`). Plain `docker compose` commands work without it;
+  they just skip that first-boot init.
+- If Langfuse is down the app still works: tracing switches off and comes back on its own within
+  a minute of Langfuse answering again.
 - Local gemma via Docker Model Runner: set `LLM_PROVIDER=local` in `backend/.env`, then
   `docker compose -f docker-compose.yml -f docker-compose.gemma.yml up -d`.
 - The old host services (`story-backend`, `story-frontend` systemd user units) are disabled; to go

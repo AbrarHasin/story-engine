@@ -7,8 +7,9 @@ import { test, expect } from '@playwright/test';
 const LANGFUSE = 'http://localhost:3000';
 const API = 'http://localhost:8080';
 
-const LF_EMAIL = 'dev@storyengine.local';
-const LF_PASSWORD = 'changeme123';
+// Local Docker stack: export these from backend/.env. The defaults are CI's dev values.
+const LF_EMAIL = process.env.LANGFUSE_INIT_USER_EMAIL || 'dev@storyengine.local';
+const LF_PASSWORD = process.env.LANGFUSE_INIT_USER_PASSWORD || 'changeme123';
 
 // ── Langfuse API auth ─────────────────────────────────────────────────────────
 
@@ -212,8 +213,8 @@ test('story generation creates langfuse trace', async ({ page, request }) => {
 
 test('langfuse API keys match backend config', async ({ request }) => {
   // Try to authenticate against Langfuse public API with the SDK keys
-  const publicKey  = 'pk-lf-story-engine-dev';
-  const secretKey  = 'sk-lf-story-engine-dev';
+  const publicKey  = process.env.LANGFUSE_PUBLIC_KEY || 'pk-lf-story-engine-dev';
+  const secretKey  = process.env.LANGFUSE_SECRET_KEY || 'sk-lf-story-engine-dev';
 
   const auth = Buffer.from(`${publicKey}:${secretKey}`).toString('base64');
 

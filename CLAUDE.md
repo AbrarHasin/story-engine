@@ -58,7 +58,7 @@ cd /home/abrar/code/story-engine
 
 ### Check Langfuse traces
 Open: http://localhost:3000/project/story-engine/traces
-Login: dev@storyengine.local / changeme123
+Login: `LANGFUSE_INIT_USER_EMAIL` / `LANGFUSE_INIT_USER_PASSWORD` in backend/.env (Docker stack; created on Langfuse's first boot)
 
 ### Quick story generation test
 ```bash
@@ -83,9 +83,11 @@ cd /home/abrar/code/story-engine/backend
 ## Environment Variables (backend/.env)
 ```
 ANTHROPIC_API_KEY=...            # ← needed for generation
-LANGFUSE_PUBLIC_KEY=pk-lf-story-engine-dev
-LANGFUSE_SECRET_KEY=sk-lf-story-engine-dev
-LANGFUSE_HOST=http://localhost:3000
+LANGFUSE_PUBLIC_KEY=pk-lf-...       # generated; Langfuse creates this key on first boot
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=http://localhost:3000 # the Docker stack overrides it with http://langfuse:3000
+LANGFUSE_INIT_USER_EMAIL=...        # Langfuse UI login
+LANGFUSE_INIT_USER_PASSWORD=...
 DATABASE_URL=postgresql+asyncpg://storyengine:changeme@localhost:5432/storyengine
 REDIS_URL=redis://localhost:6379
 ```
