@@ -10,12 +10,11 @@ Provides:
   - Full prompt/response logging
 
 Usage:
-    from app.core.observability import get_tracer, trace_node
+    from app.core.observability import get_langfuse_callback, langfuse_metadata
 
-    tracer = get_tracer()
-    with tracer.trace("story_generation", user_id="u123") as trace:
-        with trace.span("supervisor_node") as span:
-            span.update(input={"topic": "AI"}, output={"route": "full"})
+    cb = get_langfuse_callback("story_generation", trace_id=trace_id)
+    config = {"callbacks": [cb] if cb else [], "metadata": langfuse_metadata(user_id)}
+    graph.astream_events(state, config=config, version="v2")  # one span per node
 """
 
 from langfuse import Langfuse

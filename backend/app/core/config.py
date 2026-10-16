@@ -40,7 +40,6 @@ class Settings(BaseSettings):
 
     # LLM — Claude API
     ANTHROPIC_API_KEY: str = ""
-    LITELLM_BASE_URL: str = "http://localhost:4000"
 
     # Langfuse — free OSS observability (replaces LangSmith)
     LANGFUSE_PUBLIC_KEY: str = ""
@@ -61,7 +60,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
-    # Model aliases (resolved by LiteLLM proxy or direct)
+    # Model ids per role, resolved by app.llm.adapter (Anthropic SDK direct; no proxy)
     MODEL_ROUTER: str = "claude-haiku-5-5"               # cheap, routing/sub-agents ($0.10/$0.50 per 1M)
     MODEL_WRITER: str = "claude-haiku-5-5"               # story writer ($0.10/$0.50 per 1M)
     MODEL_SYNTHESIZER: str = "claude-haiku-5-5"          # critic editor ($0.10/$0.50 per 1M)
@@ -86,6 +85,7 @@ class Settings(BaseSettings):
     MAX_TOKENS_FACTS: int = 200
     MAX_TOKENS_WRITER: int = 1500
     MAX_TOKENS_SYNTHESIZER: int = 1500  # must be >= MAX_TOKENS_WRITER
+    MAX_TOKENS_PING: int = 20           # POST /llm/ping smoke test
 
 
 @lru_cache

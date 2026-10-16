@@ -14,7 +14,7 @@ Usage in endpoints:
 """
 import uuid
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -63,7 +63,7 @@ def dev_user_fallback_enabled() -> bool:
 
 def create_access_token(user_id: uuid.UUID, email: str) -> str:
     """Create a JWT access token."""
-    expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": str(user_id),
         "email": email,
@@ -75,7 +75,7 @@ def create_access_token(user_id: uuid.UUID, email: str) -> str:
 
 def create_refresh_token(user_id: uuid.UUID) -> str:
     """Create a longer-lived refresh token."""
-    expire = datetime.utcnow() + timedelta(days=30)
+    expire = datetime.now(timezone.utc) + timedelta(days=30)
     payload = {
         "sub": str(user_id),
         "exp": expire,

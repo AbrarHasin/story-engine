@@ -26,7 +26,6 @@ def _base_state(**kwargs) -> StoryState:
         "fact_bullets": [],
         "story_draft": None,
         "final_output": None,
-        "route": None,
         "errors": [],
         "token_usage": [],
         "run_id": None,

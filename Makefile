@@ -36,7 +36,7 @@ dev: ## Start full local stack (postgres, redis, langfuse)
 	docker compose up -d postgres redis langfuse
 	@echo "Waiting for postgres..." && sleep 3
 	$(MAKE) migrate
-	$(VENV)/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --app-dir backend
+	$(VENV)/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload --app-dir backend
 
 .PHONY: up
 up: ## Start all services via docker compose
@@ -79,7 +79,7 @@ deploy: ## Pull latest, sync deps, migrate, restart services, smoke test
 import sys, json; \
 d = json.load(sys.stdin); \
 print('[deploy] Health:', d); \
-sys.exit(0 if d.get('status') in ('ok', 'degraded') else 1)"
+sys.exit(0 if d.get('status') == 'ok' else 1)"
 	@echo "[deploy] Done."
 
 # ── Database ─────────────────────────────────────────────────────────────────
@@ -155,7 +155,7 @@ langfuse: ## Open Langfuse dashboard in browser
 
 .PHONY: docs
 docs: ## Open FastAPI Swagger UI
-	open http://localhost:8000/docs || start http://localhost:8000/docs
+	open http://localhost:8080/docs || start http://localhost:8080/docs
 
 # ── Utilities ────────────────────────────────────────────────────────────────
 
