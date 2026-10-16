@@ -86,6 +86,24 @@ def _bullet_list(text: str) -> list[str]:
     return [ln for ln in lines if ln and ln not in ("[", "]", "```", "```json")]
 
 
+BULLETS_MIN = 3   # prompts ask light/dark/facts for 3–5 items, research for up to 5
+BULLETS_MAX = 5
+
+
+def _counted(bullets: list[str], node: str, minimum: int = BULLETS_MIN) -> list[str]:
+    """Enforce the prompt's bullet count: keep at most BULLETS_MAX items.
+
+    A short list cannot be padded without another (paid) call, so it is kept
+    and logged instead.
+    """
+    if len(bullets) > BULLETS_MAX:
+        logger.info("%s returned %d bullets; keeping the first %d", node, len(bullets), BULLETS_MAX)
+        bullets = bullets[:BULLETS_MAX]
+    elif len(bullets) < minimum:
+        logger.warning("%s returned %d bullets; expected at least %d", node, len(bullets), minimum)
+    return bullets
+
+
 def _length_guide(length: str) -> str:
     return {"short": "1–2 sentences", "medium": "3–5 sentences", "long": "6–10 sentences"}.get(length, "3–5 sentences")
 
@@ -119,7 +137,7 @@ async def research_node(state: StoryState) -> dict:
         "Return JSON array only."
     )
     resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
-    bullets = _bullet_list(str(resp.content))
+    bullets = _counted(_bullet_list(str(resp.content)), "research", minimum=1)
 
     return {"research_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
@@ -141,7 +159,7 @@ async def light_side_node(state: StoryState) -> dict:
         "Return JSON array only."
     )
     resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
-    bullets = _bullet_list(str(resp.content))
+    bullets = _counted(_bullet_list(str(resp.content)), "light_side")
 
     return {"light_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
@@ -163,7 +181,7 @@ async def dark_side_node(state: StoryState) -> dict:
         "Return JSON array only."
     )
     resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
-    bullets = _bullet_list(str(resp.content))
+    bullets = _counted(_bullet_list(str(resp.content)), "dark_side")
 
     return {"dark_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
@@ -184,7 +202,7 @@ async def facts_node(state: StoryState) -> dict:
         "Return JSON array only."
     )
     resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
-    bullets = _bullet_list(str(resp.content))
+    bullets = _counted(_bullet_list(str(resp.content)), "facts")
 
     return {"fact_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
