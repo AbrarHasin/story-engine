@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from starlette.requests import Request
 
-from app.api.v1 import stories
+from app.api.v1 import generate
 from app.core import observability
 from app.core.client_ip import client_ip
 from app.core.config import settings
@@ -26,15 +26,15 @@ async def _collect(gen):
 
 @pytest.mark.asyncio
 async def test_paced_pings_while_a_node_is_silent():
-    out = await _collect(stories._paced(_slow_source(["a", "b"], 0.25), deadline_s=5, ping_s=0.1))
-    assert [x for x in out if x is not stories._PING] == ["a", "b"]
-    assert out.count(stories._PING) >= 2
+    out = await _collect(generate._paced(_slow_source(["a", "b"], 0.25), deadline_s=5, ping_s=0.1))
+    assert [x for x in out if x is not generate._PING] == ["a", "b"]
+    assert out.count(generate._PING) >= 2
     assert out.index("a") > 0   # a ping went out before the first event
 
 
 @pytest.mark.asyncio
 async def test_paced_without_silence_sends_no_ping():
-    out = await _collect(stories._paced(_slow_source(["a", "b"], 0), deadline_s=5, ping_s=1))
+    out = await _collect(generate._paced(_slow_source(["a", "b"], 0), deadline_s=5, ping_s=1))
     assert out == ["a", "b"]
 
 
@@ -51,8 +51,8 @@ async def test_paced_deadline_stops_and_closes_the_source():
             closed.set()
 
     out = []
-    with pytest.raises(stories.RunDeadlineExceeded):
-        async for x in stories._paced(forever(), deadline_s=0.3, ping_s=0.1):
+    with pytest.raises(generate.RunDeadlineExceeded):
+        async for x in generate._paced(forever(), deadline_s=0.3, ping_s=0.1):
             out.append(x)
     assert out[0] == "first"
     assert closed.is_set()
@@ -65,7 +65,7 @@ async def test_paced_propagates_source_errors():
         raise RuntimeError("llm down")
 
     with pytest.raises(RuntimeError):
-        await _collect(stories._paced(boom(), deadline_s=5, ping_s=1))
+        await _collect(generate._paced(boom(), deadline_s=5, ping_s=1))
 
 
 class _NeverEndingGraph:
@@ -103,17 +103,17 @@ async def test_stream_marks_story_failed_at_deadline(monkeypatch):
     from app.models.schemas import StoryGenerateRequest
 
     story = SimpleNamespace(id=uuid.uuid4(), user_id=uuid.uuid4(), status=None)
-    monkeypatch.setattr(stories, "_get_graph", AsyncMock(return_value=_NeverEndingGraph()))
-    monkeypatch.setattr(stories, "SessionLocal", lambda: _Session(story))
-    monkeypatch.setattr(stories, "get_langfuse_callback", lambda trace_name, trace_id=None: None)
+    monkeypatch.setattr(generate, "_get_graph", AsyncMock(return_value=_NeverEndingGraph()))
+    monkeypatch.setattr(generate, "SessionLocal", lambda: _Session(story))
+    monkeypatch.setattr(generate, "get_langfuse_callback", lambda trace_name, trace_id=None: None)
     monkeypatch.setattr(settings, "RUN_DEADLINE_SECONDS", 0.35)
     monkeypatch.setattr(settings, "SSE_PING_SECONDS", 0.1)
 
-    chunks = [c async for c in stories._stream_generation(
+    chunks = [c async for c in generate._stream_generation(
         story.id, StoryGenerateRequest(topic="A topic"), None, None)]
 
     assert chunks[0].startswith("event: start")
-    assert stories.SSE_PING in chunks
+    assert generate.SSE_PING in chunks
     assert chunks[-1].startswith("event: error")
     assert json.loads(chunks[-1].split("data: ", 1)[1])["code"] == "deadline"
     assert story.status.value == "failed"
@@ -146,7 +146,7 @@ def test_flush_calls_client_and_swallows_errors(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_health_on_dataapi_does_not_touch_db(monkeypatch):
-    from app import main
+    from app.core import web
 
     monkeypatch.setattr(settings, "DB_BACKEND", "dataapi")
 
@@ -154,8 +154,8 @@ async def test_health_on_dataapi_does_not_touch_db(monkeypatch):
         def connect(self):
             raise AssertionError("health must not wake the DB")
 
-    monkeypatch.setattr(main, "engine", NoEngine())
-    resp = await main.health()
+    monkeypatch.setattr(web, "engine", NoEngine())
+    resp = await web.health()
     body = json.loads(resp.body)
     assert body["status"] == "ok"
     assert body["db"].startswith("not checked")

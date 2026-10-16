@@ -1,7 +1,10 @@
 """Load secrets from SSM Parameter Store into the environment at cold start.
 
 On Lambda the secrets (ANTHROPIC_API_KEY, JWT_SECRET_KEY, SSLCOMMERZ_*) are SecureString
-parameters under SSM_PARAMETER_PATH (e.g. /story-engine/prod/), never Lambda env vars.
+parameters under SSM_PARAMETER_PATH, never Lambda env vars. SSM_PARAMETER_PATH may list
+several comma-separated paths, so each function's IAM grants only the paths it needs
+(story-api: /story-engine/prod/shared/; story-graph: shared/ plus graph/, which holds
+ANTHROPIC_API_KEY).
 `load_parameters_into_env` runs before Settings is built, so pydantic validates the
 loaded values and the production guard (app lifespan) checks them afterwards.
 
@@ -58,11 +61,15 @@ def load_parameters_into_env(
     fail loudly rather than boot with defaults.
     """
     environ = os.environ if environ is None else environ
-    path = environ.get(SSM_PATH_ENV, "").strip()
-    if not path:
+    raw = environ.get(SSM_PATH_ENV, "").strip()
+    paths = [p.strip() for p in raw.split(",") if p.strip()]
+    if not paths:
         return []
+    path = ", ".join(paths)
     allowed_set = set(allowed)
-    params = fetch_parameters(path, client)
+    params: dict[str, str] = {}
+    for one in paths:  # later paths win on a duplicate name
+        params.update(fetch_parameters(one, client))
     applied: list[str] = []
     for name, value in params.items():
         if name not in allowed_set:

@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     # "production" enables the startup guard in app.core.prod_guard
     APP_ENV: str = "development"
+    # Which routes this process serves (ADR split-api-graph):
+    #   "all"   local dev / docker compose: everything in one process (default)
+    #   "api"   story-api Lambda: every route except POST /stories/generate; never imports
+    #           LangGraph, LLM SDKs or the ONNX model
+    #   "graph" story-graph Lambda (app.graph_main): POST /stories/generate only
+    RUN_ROLE: str = "all"
     FRONTEND_URL: str = "http://localhost:5173"
     BACKEND_PUBLIC_URL: str = "http://localhost:8080"  # public base for gateway callback URLs
     BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3001"]

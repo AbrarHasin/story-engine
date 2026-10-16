@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any
-
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import SystemMessage
+from typing import TYPE_CHECKING, Any
 
 from app.agents.state import TokenUsage
 from app.core.config import settings
+
+if TYPE_CHECKING:  # langchain is imported lazily: /llm/config must not need it (story-api image)
+    from langchain_core.language_models.chat_models import BaseChatModel
+    from langchain_core.messages import SystemMessage
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,8 @@ class LLMAdapter(ABC):
 
     def system_message(self, text: str) -> SystemMessage:
         """System prompt message. Providers may add caching hints; default is plain."""
+        from langchain_core.messages import SystemMessage
+
         return SystemMessage(content=text)
 
     def info(self) -> dict:
@@ -98,6 +101,8 @@ class AnthropicAdapter(LLMAdapter):
         )
 
     def system_message(self, text: str) -> SystemMessage:
+        from langchain_core.messages import SystemMessage
+
         # Anthropic prompt caching: mark the system block (incl. personality)
         # as an ephemeral cache breakpoint.
         return SystemMessage(content=[

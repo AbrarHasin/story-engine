@@ -52,6 +52,28 @@ def test_loads_all_pages_decrypted_and_env_wins():
     assert "NOT_A_SETTING" not in env
 
 
+def test_several_paths_are_read_in_order():
+    """story-graph reads shared/ and graph/; story-api is only granted shared/."""
+    client = _client("ssm")
+    with Stubber(client) as stub:
+        stub.add_response(
+            "get_parameters_by_path",
+            {"Parameters": [{"Name": "/story-engine/prod/shared/JWT_SECRET_KEY",
+                             "Type": "SecureString", "Value": "j" * 40, "Version": 1}]},
+            {"Path": "/story-engine/prod/shared", "Recursive": False, "WithDecryption": True},
+        )
+        stub.add_response(
+            "get_parameters_by_path",
+            {"Parameters": [{"Name": "/story-engine/prod/graph/ANTHROPIC_API_KEY",
+                             "Type": "SecureString", "Value": "sk-ant-x", "Version": 1}]},
+            {"Path": "/story-engine/prod/graph", "Recursive": False, "WithDecryption": True},
+        )
+        env = {"SSM_PARAMETER_PATH": "/story-engine/prod/shared/, /story-engine/prod/graph/"}
+        applied = ssm.load_parameters_into_env(Settings.model_fields, environ=env, client=client)
+        stub.assert_no_pending_responses()
+    assert sorted(applied) == ["ANTHROPIC_API_KEY", "JWT_SECRET_KEY"]
+
+
 def test_no_path_means_no_call():
     class Boom:
         def get_parameters_by_path(self, **_):

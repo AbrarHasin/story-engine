@@ -1,42 +1,20 @@
-# Runtime dependencies for the AWS Lambda image (Dockerfile.lambda, spec 002 Option S).
+# Runtime dependencies of the story-graph Lambda image (Dockerfile.lambda target `graph`,
+# ADR split-api-graph): POST /api/v1/stories/generate with LangGraph and the semantic cache.
 # Same pins as requirements.txt minus what production on AWS does not use:
 #   - no Redis (rate limit in Postgres, CHECKPOINTER=none)
 #   - no Langfuse / OpenTelemetry (tracing is local-only)
 #   - no torch / sentence-transformers (embeddings via ONNX fastembed)
 #   - no LiteLLM, no langchain-openai (LLM_PROVIDER=anthropic)
-# plus boto3 for the RDS Data API.
 
-# ── Core API ────────────────────────────────────────────────────────────────
-fastapi==0.115.5
-uvicorn==0.32.1
-python-multipart==0.0.12
+# Everything story-api needs (auth, ownership, quota, Data API) ...
+-r requirements-lambda-api.txt
 
+# ... plus the generation stack.
 # ── LangGraph / LangChain ───────────────────────────────────────────────────
 langgraph>=0.2.56
 langchain>=0.3.13
 langchain-anthropic>=0.3.3
 langchain-core>=0.3.28
 
-# ── Database: Aurora over the RDS Data API ──────────────────────────────────
-sqlalchemy[asyncio]==2.0.36
-alembic==1.14.0
-pgvector==0.3.6
-boto3>=1.40,<2
-
-# ── Auth ─────────────────────────────────────────────────────────────────────
-python-jose[cryptography]==3.3.0
-bcrypt>=4.0.0
-httpx>=0.27.0
-
-# ── Validation / Settings ────────────────────────────────────────────────────
-pydantic==2.10.4
-pydantic-settings==2.7.0
-python-dotenv==1.0.1
-email-validator>=2.1.0
-
-# ── Payment ──────────────────────────────────────────────────────────────────
-aiohttp==3.11.11
-
 # ── Embeddings (ONNX MiniLM, no torch) ───────────────────────────────────────
 fastembed>=0.4,<1
-numpy>=2.0.0
