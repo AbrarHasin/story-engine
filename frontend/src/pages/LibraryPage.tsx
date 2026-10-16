@@ -2,8 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Clock, CheckCircle2, XCircle, Loader2 } from 'lucide-react'
 import { clsx } from 'clsx'
+import { apiFetch } from '@/lib/auth'
 
-const API = import.meta.env.VITE_API_BASE_URL || ''
 
 interface Story {
   id: string
@@ -22,7 +22,7 @@ function useStories() {
   return useQuery<Story[]>({
     queryKey: ['stories'],
     queryFn: async () => {
-      const r = await fetch(`${API}/api/v1/stories/`)
+      const r = await apiFetch(`/api/v1/stories/`)
       if (!r.ok) throw new Error('Failed to fetch stories')
       return r.json()
     },

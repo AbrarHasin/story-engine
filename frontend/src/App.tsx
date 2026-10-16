@@ -1,13 +1,18 @@
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
-import { BookOpen, User2, Library, Activity, Settings } from 'lucide-react'
+import { BrowserRouter, Routes, Route, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
+import { BookOpen, User2, Library, Activity, Settings, LogOut } from 'lucide-react'
 import { clsx } from 'clsx'
 import GeneratePage from '@/pages/GeneratePage'
 import PersonalitiesPage from '@/pages/PersonalitiesPage'
 import LibraryPage from '@/pages/LibraryPage'
 import StoryDetailPage from '@/pages/StoryDetailPage'
 import SettingsPage from '@/pages/SettingsPage'
+import LoginPage from '@/pages/LoginPage'
+import { useAuthStore } from '@/lib/auth'
 
 export default function App() {
+  const token = useAuthStore((s) => s.token)
+  const logout = useAuthStore((s) => s.logout)
+
   return (
     <BrowserRouter>
       <div className="min-h-screen flex flex-col">
@@ -18,13 +23,13 @@ export default function App() {
               <BookOpen size={20} />
               Story Engine
             </div>
-            <nav className="flex gap-1">
+            {token && <nav className="flex gap-1">
               <NavItem to="/" icon={<Activity size={15} />} label="Generate" />
               <NavItem to="/personalities" icon={<User2 size={15} />} label="Personalities" />
               <NavItem to="/library" icon={<Library size={15} />} label="Library" />
               <NavItem to="/settings" icon={<Settings size={15} />} label="Settings" />
-            </nav>
-            <div className="ml-auto">
+            </nav>}
+            <div className="ml-auto flex items-center gap-3">
               <a
                 href={import.meta.env.VITE_LANGFUSE_HOST || 'http://localhost:3000'}
                 target="_blank"
@@ -33,6 +38,16 @@ export default function App() {
               >
                 Traces ↗
               </a>
+              {token && (
+                <button
+                  type="button"
+                  onClick={logout}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+                >
+                  <LogOut size={15} />
+                  Log out
+                </button>
+              )}
             </div>
           </div>
         </header>
@@ -40,16 +55,27 @@ export default function App() {
         {/* Page content */}
         <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-6">
           <Routes>
-            <Route path="/" element={<GeneratePage />} />
-            <Route path="/personalities" element={<PersonalitiesPage />} />
-            <Route path="/library" element={<LibraryPage />} />
-            <Route path="/stories/:id" element={<StoryDetailPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route element={<RequireAuth />}>
+              <Route path="/" element={<GeneratePage />} />
+              <Route path="/personalities" element={<PersonalitiesPage />} />
+              <Route path="/library" element={<LibraryPage />} />
+              <Route path="/stories/:id" element={<StoryDetailPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
           </Routes>
         </main>
       </div>
     </BrowserRouter>
   )
+}
+
+/** No token (never logged in, logged out, or a 401) -> /login, then back here. */
+function RequireAuth() {
+  const token = useAuthStore((s) => s.token)
+  const location = useLocation()
+  if (!token) return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  return <Outlet />
 }
 
 function NavItem({ to, icon, label }: { to: string; icon: React.ReactNode; label: string }) {

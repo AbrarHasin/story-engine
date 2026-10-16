@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { apiFetch } from '@/lib/auth'
 
-const API = import.meta.env.VITE_API_BASE_URL || ''
 
 export interface Personality {
   id: string
@@ -14,13 +14,13 @@ export interface Personality {
 }
 
 async function fetchPersonalities(): Promise<Personality[]> {
-  const r = await fetch(`${API}/api/v1/personalities/`)
+  const r = await apiFetch(`/api/v1/personalities/`)
   if (!r.ok) throw new Error('Failed to fetch personalities')
   return r.json()
 }
 
 async function createPersonality(body: Omit<Personality, 'id'>): Promise<Personality> {
-  const r = await fetch(`${API}/api/v1/personalities/`, {
+  const r = await apiFetch(`/api/v1/personalities/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -30,7 +30,8 @@ async function createPersonality(body: Omit<Personality, 'id'>): Promise<Persona
 }
 
 async function deletePersonality(id: string): Promise<void> {
-  await fetch(`${API}/api/v1/personalities/${id}`, { method: 'DELETE' })
+  const r = await apiFetch(`/api/v1/personalities/${id}`, { method: 'DELETE' })
+  if (!r.ok) throw new Error('Failed to delete personality')
 }
 
 export function usePersonalities() {

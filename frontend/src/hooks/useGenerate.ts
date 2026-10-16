@@ -2,9 +2,11 @@
  * useGenerate — opens an SSE connection to POST /api/v1/stories/generate
  * and feeds events into the Zustand generation store.
  *
- * SSE via fetch (not EventSource) so we can POST with a body.
+ * SSE via fetch (not EventSource) so we can POST with a body and send the
+ * Authorization: Bearer header (EventSource cannot set headers).
  */
 import { useGenerationStore } from '@/stores/generationStore'
+import { apiFetch } from '@/lib/auth'
 
 export interface GenerateRequest {
   topic: string
@@ -18,8 +20,6 @@ export interface GenerateRequest {
   include_facts: boolean
 }
 
-const API = import.meta.env.VITE_API_BASE_URL || ''
-
 export function useGenerate() {
   const store = useGenerationStore()
 
@@ -28,13 +28,18 @@ export function useGenerate() {
 
     let resp: Response
     try {
-      resp = await fetch(`${API}/api/v1/stories/generate`, {
+      resp = await apiFetch('/api/v1/stories/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
         body: JSON.stringify(req),
       })
     } catch (err) {
       store.setError(`Network error: ${err instanceof Error ? err.message : 'could not reach backend'}`)
+      return
+    }
+
+    if (resp.status === 401) {
+      store.setError('Your session has expired. Please log in again.')
       return
     }
 

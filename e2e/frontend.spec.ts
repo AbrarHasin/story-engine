@@ -4,21 +4,24 @@
  */
 import { test, expect } from '@playwright/test';
 
-const FRONTEND = 'http://localhost:5173';
-const API = 'http://localhost:8080';
+const FRONTEND = process.env.E2E_FRONTEND_URL || 'http://localhost:5173';
+const API = process.env.E2E_API_URL || 'http://localhost:8080';
 
-// The API requires JWT auth but the UI doesn't manage tokens yet — register a
-// throwaway user and inject the Bearer header into every browser API request.
+// Register a throwaway user and start the SPA already logged in: the token goes
+// where the app keeps it, and the app itself sends the Bearer header.
+// (The login screens are covered in auth.spec.ts.)
 async function authedPage(page: any, request: any): Promise<string> {
   const r = await request.post(`${API}/api/v1/auth/register`, {
     data: { email: `fe-e2e-${Date.now()}@test.com`, password: 'testpassword123', name: 'FE E2E' },
   });
   const token = (await r.json()).access_token;
-  await page.route('**/api/v1/**', async (route: any) => {
-    await route.continue({ headers: { ...route.request().headers(), authorization: `Bearer ${token}` } });
-  });
+  await page.addInitScript((t: string) => localStorage.setItem('story-engine.access_token', t), token);
   return token;
 }
+
+test.beforeEach(async ({ page, request }) => {
+  await authedPage(page, request);
+});
 
 // ── App loads ─────────────────────────────────────────────────────────────────
 

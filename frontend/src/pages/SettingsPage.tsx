@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { CheckCircle2, XCircle, ExternalLink, Server, Database, Cpu, Eye } from 'lucide-react'
 import { clsx } from 'clsx'
+import { API_BASE, apiFetch } from '@/lib/auth'
 
-const API = import.meta.env.VITE_API_BASE_URL || ''
+const API = API_BASE
 const LANGFUSE = import.meta.env.VITE_LANGFUSE_HOST || 'http://localhost:3000'
 
 interface HealthCheck {
@@ -17,7 +18,7 @@ function useHealth() {
   return useQuery<HealthCheck>({
     queryKey: ['health'],
     queryFn: async () => {
-      const r = await fetch(`${API}/health`)
+      const r = await apiFetch('/health')
       return r.json()
     },
     refetchInterval: 30000, // poll every 30s
