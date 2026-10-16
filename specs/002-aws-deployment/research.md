@@ -1,6 +1,6 @@
 # Research: Run Story Engine on AWS
 
-**Spec**: [spec.md](./spec.md) | **Date**: 2026-10-16 (v2, serverless first; v2.2 adds R7 ADR split-api-graph)
+**Spec**: [spec.md](./spec.md) | **Date**: 2026-10-16 (v2, serverless first; v2.2 adds R7 ADR split-api-graph; v3 Option S chosen, R8 analysis; v3.1 Bedrock for prod, go-live deferred)
 **Method**: v1 read `docker-compose*.yml`, `nginx/prod.conf`, Dockerfiles, `config.py`, `requirements.txt`,
 CI, Makefile. v2 also read `core/limits.py`, `core/database.py`, `api/v1/stories.py`, `payment/sslcommerz.py`,
 `agents/graph.py`, `cache/semantic.py`, and the Doctor-Assist cloud note (spec 008, live since 2026-07-29).
@@ -10,18 +10,17 @@ Prices by web search on 2026-10-16. No AWS account, CLI or API key was used.
 
 | Option | Shape | Verdict |
 |---|---|---|
-| S Serverless | Two Lambdas split by route (`story-api` buffered, `story-graph` streaming; R7) + `migrate` (containers, Web Adapter) behind API Gateway REST response streaming + Route 53 sub-zone + CloudFront/S3 (SPA) + Aurora Serverless v2 via Data API + SSM + ECR, GitHub OIDC, SAM | **Recommended** |
-| 1 Lean | One Lightsail 8 GB host, existing compose stack, Cloudflare Tunnel | Baseline: fastest go-live |
-| 2 Managed | ECS Fargate + RDS + ElastiCache + ALB + S3/CloudFront + Secrets Manager | Not pursued: dearest and slowest at this traffic |
+| S Serverless | Two Lambdas split by route (`story-api` buffered, `story-graph` streaming; R7) + `migrate` (containers, Web Adapter) behind API Gateway REST response streaming + Route 53 sub-zone + CloudFront/S3 (SPA) + Aurora Serverless v2 via Data API + SSM + ECR, GitHub OIDC, SAM | **Chosen (D1, human, 2026-10-16)** |
+| 1 Lean (Lightsail + compose) / 2 Managed (Fargate + RDS + ALB) | - | **Rejected 2026-10-16 (human): removed from planning; ~$50 and ~$104/month flat, a host or more to run** |
 | API Gateway HTTP API + Mangum (Doctor-Assist's API edge) | Buffered, 30 s integration limit | Rejected for Story Engine: no SSE |
 | API Gateway REST API with response streaming | Up to 15 min, 5 min idle (Regional), Nov 2025 | **Chosen edge (2026-10-16)**: the only AWS edge that streams a Lambda response; replaces nginx |
 | ALB -> Lambda target | Reply is one JSON, max 1 MB, Content-Length computed first ([AWS](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html)); ~$16/month floor | Rejected: no streaming |
 | CloudFront -> Lambda function URL (v2 plan) | Streams; needs `X-Origin-Verify` guard because OAC breaks POST | Superseded by API Gateway REST; kept as fallback if the LWA-behind-REST spike fails |
 | App Runner, EKS | - | Rejected (v1) |
 
-**Decision**: recommend Option S. **Rationale**: ~$12.60/month at 1,000 stories and ~$2 idle vs $50
-flat (Lean) and ~$104 (Managed); no host to patch; reuses a design already debugged live in
-Doctor-Assist. **Cost of it**: ~5.5 person-days more than Lean, most of it in the Data API adapter.
+**Decision**: Option S (D1, human, 2026-10-16). **Rationale**: ~$12.60/month at 1,000 stories and ~$2 idle and ~$2.40 idle;
+no host to patch; reuses a design already debugged live in
+Doctor-Assist. Most of the effort is the Data API adapter.
 
 ## R2. Monthly cost (us-east-1, on-demand, 1,000 stories/month)
 
@@ -38,8 +37,9 @@ Doctor-Assist. **Cost of it**: ~5.5 person-days more than Lean, most of it in th
 | Route 53 public hosted zone (alias queries free) | $0.50/zone-month | 0.50 | [AWS](https://aws.amazon.com/route53/pricing/) |
 | ECR ~1 GB, CloudWatch logs + 4 alarms | - | ~1.00 | unverified |
 | SSM Parameter Store standard, ACM, Cloudflare NS records | free | 0 | - |
+| Secrets Manager: the RDS-managed master secret the Data API needs (found while building #15) | $0.40/secret-month | 0.40 | [AWS](https://aws.amazon.com/secrets-manager/pricing/) |
 | Langfuse | not in AWS (D5: local only, tracing off in prod) | 0 | 2026-10-16 decision |
-| **Idle floor** (paused DB, no traffic) | | **~2.00** | |
+| **Idle floor** (paused DB, no traffic) | | **~2.40** (was ~2.00 before the secret line) | |
 | **If minimum 0.5 ACU** (never pauses) | 0.5 x 730 h x $0.12 = $43.80 | **~45** | |
 
 Scale to 0 ACU: Aurora PostgreSQL 13.15+, 14.12+, 15.7+, 16.3+
@@ -51,24 +51,14 @@ Resume ~15 s, longer after 24 h idle (third-party). RDS Proxy keeps the cluster 
 
 Per-story compute beyond the free tier: 2 GB x 120 s x $0.0000133334 = ~$0.0032 (vs ~$0.0073 LLM).
 
-### Option 1 Lean: ~$50 (idle the same)
+The ~$12.60 low-traffic total predates the secret line; with it the total is ~$13, still under SC-002's $20.
 
-Lightsail 8 GB $44 ([AWS](https://docs.aws.amazon.com/lightsail/latest/userguide/amazon-lightsail-bundles.md)),
-snapshots ~$4, S3 + ECR ~$1, CloudWatch ~$1 (unverified). Self-hosted Langfuse needs a 16 GB host (+~$40).
+### LLM tokens
 
-### Option 2 Managed: ~$104 minimal, ~$162 with HA (idle the same)
-
-Fargate 1 vCPU/2 GB ARM $28.84, RDS `db.t4g.small` + 20 GB $25.66, ALB $22.27, ElastiCache
-`t4g.micro` $9.34, public IPv4 x3 $10.95, Secrets Manager x8 $3.20, other ~$3.50. Sources as in v1:
-[Vantage](https://www.vantage.sh/blog/fargate-pricing), [Bytebase](https://www.bytebase.com/dbcost/rds/instance/db.t4g.small/),
-[cloudburn ALB](https://cloudburn.io/blog/aws-elastic-load-balancing-pricing),
-[Upstash](https://upstash.com/blog/aws-elasticache-pricing-explained-2026-full-cost-breakdown),
-[cloudburn VPC](https://cloudburn.io/blog/amazon-vpc-pricing).
-
-### LLM tokens (all options)
-
-~$0.0073/story, ~$7.27 per 1,000 stories (Haiku 5.5 router + writer, Sonnet 5.5 editor), vault
-`Model-Cost-Analysis.md`. Unchanged by the hosting move.
+~$0.0073/story, ~$7.27 per 1,000 stories at Anthropic list prices (Haiku 5.5 router + writer, Sonnet 5.5
+editor; lower with the Haiku editor, #13), vault `Model-Cost-Analysis.md`. Production uses Amazon Bedrock
+(D4 revised); Bedrock on-demand prices for these models are assumed equal to Anthropic list prices
+(unverified, check before go-live), so SC-003 holds if that is true.
 
 ## R3. Where Story Engine differs from Doctor-Assist (Option S design answers)
 
@@ -98,20 +88,21 @@ through API Gateway HTTP API + Mangum. Story Engine streams one long request per
 
 ## R4. Effort (person-days)
 
-| Phase | Option S | Option 1 |
-|---|---|---|
-| P0 Prod readiness (shared) | 1.5 | 1.5 |
-| IaC / host base | 1.0 | 0.5 |
-| Data services + data move | 1.0 | 1.0 (compose) + 1.0 (data, backups) |
-| Data access adapter | 3.0 | - |
-| Compute packaging (incl. api/graph split, R7) | 2.0 | - |
-| Edge / frontend | 1.0 | - |
-| CI/CD | 1.0 | 1.0 |
-| Monitoring, tests, cutover, runbook | 1.5 | 1.0 |
-| **Total** | **12 (~14.5 with 20%)** | **6 (~7)** |
+| Phase | Option S |
+|---|---|
+| P0 Prod readiness | 1.5 |
+| IaC base | 1.0 |
+| Data services + data move | 1.0 |
+| Data access adapter | 3.0 |
+| Compute packaging (incl. api/graph split, R7) | 2.0 |
+| Edge / frontend | 1.0 |
+| CI/CD | 1.0 |
+| Monitoring, tests, cutover, runbook | 1.5 |
+| **Total planned** | **12 (~14.5 with 20%)** |
+| Bedrock adapter (T044, added with D4 revised) | 1.5-2 |
 
-Option 2 Managed: 13 (~16). Option S with D7 = VPC + NAT instance: ~10 (~12). Option S was 11.5
-before ADR `split-api-graph` (R7) added 0.5 day.
+Option S with D7 = VPC + NAT instance: ~10 (~12). Remaining effort after the draft PRs: plan.md
+"Implementation sequence".
 
 ## R5. Decisions (answered 2026-10-16, T001)
 
@@ -123,7 +114,7 @@ recommended default below.
 | D1 | **Option S Serverless** | human, 2026-10-16 |
 | D2 | **us-east-1** | human, 2026-10-16 |
 | D3 | **Route 53 sub-zone** `storyteller.techvigilant.com` NS-delegated from Cloudflare; edge = API Gateway REST streaming, no nginx | human, 2026-10-16 |
-| D4 | **Anthropic API** (no Bedrock) | human, 2026-10-16 |
+| D4 | **Amazon Bedrock in production**; Anthropic API for local dev (revised 2026-10-16; first answer was Anthropic API) | human, 2026-10-16 |
 | D5 | **Langfuse local only**, for debugging; production runs with tracing off; no Langfuse in AWS | human, 2026-10-16 |
 | D6 | SAM | recommended default |
 | D7 | Data API adapter (no VPC Lambda, no NAT) | recommended default |
@@ -137,10 +128,10 @@ Infrastructure for these answers: branch `aws-infra` (`infra/template.yaml`, `.g
 
 | Id | Decision | Options | Recommendation |
 |---|---|---|---|
-| D1 | Option | S / Lean / Managed | S; Lean if go-live speed beats ~$38/month |
+| D1 | Option | S / two alternatives (R1, rejected) | S |
 | D2 | Region | us-east-1 / ap-south-1 | us-east-1 (Doctor-Assist verified); ap-south-1 only after checking Data API + 0 ACU there |
 | D3 | DNS | Cloudflare CNAME / Route 53 sub-zone | **Resolved 2026-10-16 (human): Route 53 sub-zone NS-delegated from Cloudflare, as Doctor-Assist; no Tunnel or Cloudflare proxy; +$0.50/month.** Edge: API Gateway REST streaming, no nginx (+~$0.07/month) |
-| D4 | LLM provider | Anthropic API / Bedrock | Anthropic API now |
+| D4 | LLM provider | Anthropic API / Bedrock | Anthropic API first; revised to Bedrock for production |
 | D5 | Langfuse | Cloud Hobby / home self-host via Tunnel / AWS self-host | Home self-host via Tunnel (complies with IV, $0) or Cloud Hobby with amendment |
 | D6 | IaC | SAM / CDK / Terraform | SAM (Doctor-Assist precedent) |
 | D7 | DB path | Data API adapter / Lambda in VPC + NAT instance | Data API adapter |
@@ -196,3 +187,32 @@ also caps LLM spend and Aurora load); failures are isolated.
 **Cost**: about neutral to slightly lower (CRUD at 512 MB instead of 2048 MB: ~243k instead of
 ~252k GB-s/month, inside the free tier either way); one more function, still $0 idle compute.
 **Effort**: +0.5 person-day (P4 Compute packaging 1.5 -> 2.0; T019/T020 split into T019a/b, T020a/b).
+
+## R8. Analysis pass (`/speckit-analyze`, 2026-10-16, v3)
+
+Cross-check of spec.md, plan.md, tasks.md and the constitution against the code in #15 and #17.
+All findings below were fixed in v3 of the three files.
+
+| ID | Category | Severity | Finding | Fix |
+|---|---|---|---|---|
+| C1 | Constitution | CRITICAL | IV "every generation MUST produce a Langfuse trace" conflicts with D5 (production tracing off); FR-010, US4 and T038 still required a trace in production | FR-010 follows D5; T005 now drafts the IV amendment and gates cutover (plan Gate C); Constitution Check marks IV AMEND |
+| C2 | Constitution | HIGH | Workflow "CD = `make deploy`" vs the GitHub Actions deploy job | Kept in T005; plan marks AMEND |
+| I1 | Inconsistency | HIGH | US2 said "deploy on green `master`"; `deploy.yml` is `workflow_dispatch` only, automatic deploys off until the human approves | US2 rewritten; T030 states it |
+| I2 | Inconsistency | HIGH | SC-001 required every local Playwright test to pass on AWS; `langfuse.spec.ts` (D5) and the `/llm/ping` tests cannot (route not served on AWS) | SC-001 lists the expected suites and the exclusions |
+| I3 | Inconsistency | MEDIUM | FR-003 allowed `bedrock`; no Bedrock adapter exists and the stack Rule rejects it without `UseBedrock` | FR-003: provider switchable, `bedrock` rejected until T044 |
+| I4 | Inconsistency | MEDIUM | Plan summary said 11.5 pd, phase table 12 | Plan uses 12 planned, ~7.5 remaining |
+| I5 | Terminology | MEDIUM | `app/main_graph.py` (plan, tasks) vs `app/graph_main.py` (built); `stories.py` vs `generate.py` for the SSE code | Names follow the code |
+| I6 | Inconsistency | MEDIUM | Idle cost ~$2 omitted the $0.40 RDS master secret (runbook says ~$2.40) | R2 row added; SC-002 ~$2.40 |
+| I7 | Inconsistency | LOW | FR-017 / T020a said `ANY /{proxy+}` only; built template maps `/`, `/api`, `/api/v1`, `/api/v1/stories` explicitly (parents of the generate resource) | Plan functions table and T020a list them |
+| I8 | Inconsistency | LOW | Spec status "planning only", assumption "the human picks one option" | Status and assumptions updated |
+| G1 | Coverage | HIGH | FR-009 `/health` failure alarm: template has Errors, Throttles, Duration, 5xx, Aurora alarms but no `/health` check | T036 partial, open part AGENT |
+| G2 | Coverage | MEDIUM | T014 real-Aurora suite: only stubbed tests exist | Split T014a (AGENT, write) / T014b (FIRST-DEPLOY, run) |
+| G3 | Coverage | MEDIUM | Edge case "concurrency cap -> clear 429/503" untested; status code from a throttled STREAM integration unknown | Edge case reworded; check in T039 |
+| G4 | Coverage | MEDIUM | FR-006 migrations vs alias rollback: schema is not rolled back | FR-006 requires backward-compatible (expand/contract) migrations |
+| G5 | Coverage | MEDIUM | No task for a Bedrock adapter although production has no funded key | T044 (AGENT, 1.5-2 d, not started) |
+| G6 | Coverage | LOW | No task for PR integration order | T045 + plan "Implementation sequence" |
+| U1 | Underspecified | LOW | FR-002 "at least 300 s" vs the 600 s deadline | FR-002 says 600 s on the generate path |
+
+Metrics after the fixes: 17 FR + 7 SC; every FR and buildable SC maps to at least one task; 42 tasks
+(8 done in draft, 16 partial, 18 open); 0 CRITICAL left open in the documents (C1 remains a gate
+until T005 merges).
