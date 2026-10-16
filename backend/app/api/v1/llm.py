@@ -3,12 +3,14 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from langchain_core.messages import HumanMessage
 
 from app.core.auth import get_current_user
 from app.llm import get_adapter
 
 router = APIRouter(prefix="/llm", tags=["LLM"])
+# /ping runs a real inference, so it needs langchain + the provider SDK. It is mounted
+# only where the LLM stack is installed (RUN_ROLE all/graph), never on story-api.
+ping_router = APIRouter(prefix="/llm", tags=["LLM"])
 logger = logging.getLogger(__name__)
 
 
@@ -18,7 +20,7 @@ async def llm_config():
     return get_adapter().info()
 
 
-@router.post("/ping", dependencies=[Depends(get_current_user)])
+@ping_router.post("/ping", dependencies=[Depends(get_current_user)])
 async def llm_ping():
     """Run one tiny real inference through the active adapter.
 
@@ -26,6 +28,8 @@ async def llm_ping():
     Docker model is loaded and serving). Requires auth: it spends tokens
     on the Claude provider.
     """
+    from langchain_core.messages import HumanMessage
+
     adapter = get_adapter()
     llm = adapter.chat("router", max_tokens=20, temperature=0.0)
     try:

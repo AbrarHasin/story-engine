@@ -1,0 +1,20 @@
+# Runtime dependencies of the story-graph Lambda image (Dockerfile.lambda target `graph`,
+# ADR split-api-graph): POST /api/v1/stories/generate with LangGraph and the semantic cache.
+# Same pins as requirements.txt minus what production on AWS does not use:
+#   - no Redis (rate limit in Postgres, CHECKPOINTER=none)
+#   - no Langfuse / OpenTelemetry (tracing is local-only)
+#   - no torch / sentence-transformers (embeddings via ONNX fastembed)
+#   - no LiteLLM, no langchain-openai (LLM_PROVIDER=anthropic)
+
+# Everything story-api needs (auth, ownership, quota, Data API) ...
+-r requirements-lambda-api.txt
+
+# ... plus the generation stack.
+# ── LangGraph / LangChain ───────────────────────────────────────────────────
+langgraph>=0.2.56
+langchain>=0.3.13
+langchain-anthropic>=0.3.3
+langchain-core>=0.3.28
+
+# ── Embeddings (ONNX MiniLM, no torch) ───────────────────────────────────────
+fastembed>=0.4,<1

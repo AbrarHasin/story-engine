@@ -258,7 +258,7 @@ def _final_events():
 
 
 async def _drive(monkeypatch, graph, story):
-    from app.api.v1 import stories
+    from app.api.v1 import generate as stories
     from app.models.schemas import StoryGenerateRequest
 
     factory = _FakeSessionFactory(story)
@@ -266,7 +266,7 @@ async def _drive(monkeypatch, graph, story):
 
     def fake_callback(trace_name, trace_id=None):
         seen["trace_id"] = trace_id
-        return None
+        return seen.get("callback", "fake-langfuse-callback")
 
     monkeypatch.setattr(stories, "_get_graph", AsyncMock(return_value=graph))
     monkeypatch.setattr(stories, "SessionLocal", factory)
@@ -295,7 +295,7 @@ async def test_generator_persists_research_with_own_session(monkeypatch):
 @pytest.mark.asyncio
 async def test_generator_completed_at_is_current_utc(monkeypatch):
     import inspect
-    from app.api.v1 import stories
+    from app.api.v1 import generate as stories
 
     story = _fake_story()
     await _drive(monkeypatch, _FakeGraph(_final_events()), story)

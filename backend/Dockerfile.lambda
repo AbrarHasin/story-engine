@@ -1,0 +1,102 @@
+# Story Engine backend on AWS Lambda (spec 002 Option S, ADR split-api-graph).
+#
+#   docker buildx build --platform linux/arm64 -f backend/Dockerfile.lambda \
+#       --target api     -t story-engine-api     backend/
+#   docker buildx build --platform linux/arm64 -f backend/Dockerfile.lambda \
+#       --target graph   -t story-engine-graph   backend/
+#   docker buildx build --platform linux/arm64 -f backend/Dockerfile.lambda \
+#       --target migrate -t story-engine-migrate backend/
+#
+# api:     story-api Lambda. FastAPI for every route except generation (app.main,
+#          RUN_ROLE=api) behind the Lambda Web Adapter in buffered mode (API Gateway
+#          BUFFERED integration). No LangGraph, LLM SDK or ONNX model: small and fast to
+#          cold start. requirements-lambda-api.txt.
+# graph:   story-graph Lambda. Only POST /api/v1/stories/generate (app.graph_main,
+#          RUN_ROLE=graph) behind the Web Adapter in response_stream mode, so SSE reaches
+#          API Gateway (REST, transfer mode STREAM) as it is produced. LangGraph + the
+#          Anthropic SDK + ONNX MiniLM. requirements-lambda.txt.
+# migrate: AWS Lambda Python base image; handler app.migrate.handler runs `alembic upgrade`
+#          over the RDS Data API (and reports the CodeDeploy hook status). API deps only.
+#
+# MiniLM is baked into `graph` as ONNX (fastembed) at build time: the Lambda filesystem is
+# read-only and nothing is downloaded at runtime. It is loaded lazily on the first
+# semantic-cache lookup, so cold starts without SEMANTIC_CACHE_ENABLED never pay for it.
+# Each runtime target re-checks at build time that its entry point imports.
+
+ARG PYTHON_IMAGE=public.ecr.aws/docker/library/python:3.12-slim-bookworm
+ARG LWA_IMAGE=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1
+ARG LAMBDA_PYTHON_IMAGE=public.ecr.aws/lambda/python:3.12
+
+FROM ${LWA_IMAGE} AS lwa
+
+# ── dependencies ─────────────────────────────────────────────────────────────
+FROM ${PYTHON_IMAGE} AS deps-api
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+COPY requirements-lambda-api.txt /tmp/
+RUN pip install --target /opt/python -r /tmp/requirements-lambda-api.txt
+
+FROM ${PYTHON_IMAGE} AS deps-graph
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+COPY requirements-lambda-api.txt requirements-lambda.txt /tmp/
+RUN pip install --target /opt/python -r /tmp/requirements-lambda.txt
+ENV PYTHONPATH=/opt/python
+ARG EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+RUN python -c "from fastembed import TextEmbedding; \
+TextEmbedding(model_name='${EMBEDDING_MODEL}', cache_dir='/opt/models'); print('model baked')"
+
+# ── shared runtime base (Web Adapter + app code) ─────────────────────────────
+FROM ${PYTHON_IMAGE} AS runtime
+COPY --from=lwa /lambda-adapter /opt/extensions/lambda-adapter
+WORKDIR /var/task
+ENV PYTHONPATH=/opt/python:/var/task \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DB_BACKEND=dataapi \
+    CHECKPOINTER=none \
+    TRUST_PROXY_HEADERS=true \
+    APP_ENV=production \
+    PORT=8080 \
+    AWS_LWA_PORT=8080 \
+    AWS_LWA_READINESS_CHECK_PATH=/health \
+    AWS_LWA_ASYNC_INIT=true
+EXPOSE 8080
+
+# ── api: story-api, buffered ─────────────────────────────────────────────────
+FROM runtime AS api
+COPY --from=deps-api /opt/python /opt/python
+COPY app ./app
+ENV RUN_ROLE=api \
+    AWS_LWA_INVOKE_MODE=buffered
+# Fails the build if the API entry point pulls in the generation stack.
+RUN python -c "import sys, app.main; \
+bad = sorted({n.split('.')[0] for n in sys.modules} & {'langgraph','langchain','langchain_core','langchain_anthropic','anthropic','fastembed','onnxruntime','torch'}); \
+assert not bad, bad; print('api entry point ok, no generation stack')"
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", \
+     "--workers", "1", "--no-access-log", "--timeout-keep-alive", "30"]
+
+# ── graph: story-graph, response streaming ───────────────────────────────────
+FROM runtime AS graph
+COPY --from=deps-graph /opt/python /opt/python
+COPY --from=deps-graph /opt/models /opt/models
+COPY app ./app
+ENV RUN_ROLE=graph \
+    AWS_LWA_INVOKE_MODE=response_stream \
+    HF_HUB_OFFLINE=1 \
+    FASTEMBED_CACHE_PATH=/opt/models \
+    EMBEDDING_BACKEND=fastembed \
+    EMBEDDING_CACHE_DIR=/opt/models
+RUN python -c "import app.graph_main, app.agents.graph; print('graph entry point ok')"
+CMD ["python", "-m", "uvicorn", "app.graph_main:app", "--host", "0.0.0.0", "--port", "8080", \
+     "--workers", "1", "--no-access-log", "--timeout-keep-alive", "900"]
+
+# ── migrate: alembic upgrade as a plain Lambda handler ───────────────────────
+FROM ${LAMBDA_PYTHON_IMAGE} AS migrate
+COPY --from=deps-api /opt/python /opt/python
+COPY app ${LAMBDA_TASK_ROOT}/app
+COPY alembic ${LAMBDA_TASK_ROOT}/alembic
+COPY alembic.ini ${LAMBDA_TASK_ROOT}/
+ENV PYTHONPATH=/opt/python:${LAMBDA_TASK_ROOT} \
+    DB_BACKEND=dataapi \
+    APP_ENV=production
+RUN python -c "import app.migrate; print('migrate handler ok')"
+CMD ["app.migrate.handler"]

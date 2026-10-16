@@ -3,7 +3,7 @@ API smoke tests — run with: make test-api
 These hit a live DB (no mocks). Start infra first: make up-infra
 """
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -81,28 +81,20 @@ GENERATE = "/api/v1/stories/generate"
 BODY = {"topic": "A lighthouse keeper"}
 
 
-class FakeRedis:
-    """Minimal in-memory stand-in for the redis calls limits.py makes."""
+RATE_KEY = f"generate:{DEV_USER_ID}"
 
-    def __init__(self):
-        self.counts: dict[str, int] = {}
 
-    async def incr(self, key):
-        self.counts[key] = self.counts.get(key, 0) + 1
-        return self.counts[key]
-
-    async def expire(self, key, seconds):
-        return True
-
-    async def ttl(self, key):
-        return 42
+async def _clear_rate_window():
+    async with engine.begin() as conn:
+        await conn.execute(text("DELETE FROM rate_limit_window WHERE key = :k"), {"k": RATE_KEY})
 
 
 @pytest.fixture
-def fake_redis(monkeypatch):
-    fake = FakeRedis()
-    monkeypatch.setattr(limits, "_get_redis", lambda: fake)
-    return fake
+async def fresh_rate_window():
+    """Start each generate test with an empty rate-limit window (Postgres, no Redis)."""
+    await _clear_rate_window()
+    yield
+    await _clear_rate_window()
 
 
 async def _set_stories_this_month(n: int):
@@ -118,7 +110,7 @@ async def _set_stories_this_month(n: int):
 
 
 @pytest.mark.asyncio
-async def test_generate_rejects_foreign_personality(client, fake_redis):
+async def test_generate_rejects_foreign_personality(client, fresh_rate_window):
     other_user, pid = uuid.uuid4(), uuid.uuid4()
     async with engine.begin() as conn:
         await conn.execute(
@@ -146,13 +138,13 @@ async def test_generate_rejects_foreign_personality(client, fake_redis):
 
 
 @pytest.mark.asyncio
-async def test_generate_rejects_unknown_personality(client, fake_redis):
+async def test_generate_rejects_unknown_personality(client, fresh_rate_window):
     r = await client.post(GENERATE, json={**BODY, "personality_id": str(uuid.uuid4())})
     assert r.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_generate_blocked_at_plan_limit(client, fake_redis):
+async def test_generate_blocked_at_plan_limit(client, fresh_rate_window):
     await _set_stories_this_month(settings.PLAN_LIMIT_FREE)
     try:
         r = await client.post(GENERATE, json=BODY)
@@ -162,24 +154,46 @@ async def test_generate_blocked_at_plan_limit(client, fake_redis):
 
 
 @pytest.mark.asyncio
-async def test_generate_rate_limited_with_retry_after(client, fake_redis, monkeypatch):
+async def test_generate_rate_limited_with_retry_after(client, fresh_rate_window, monkeypatch):
     monkeypatch.setattr(settings, "RATE_LIMIT_PER_MINUTE", 2)
     unknown = {**BODY, "personality_id": str(uuid.uuid4())}   # 404s fast, still counts
     assert (await client.post(GENERATE, json=unknown)).status_code == 404
     assert (await client.post(GENERATE, json=unknown)).status_code == 404
     r = await client.post(GENERATE, json=unknown)
     assert r.status_code == 429
-    assert r.headers["retry-after"] == "42"
+    assert 1 <= int(r.headers["retry-after"]) <= 60
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_fails_open_when_redis_down(monkeypatch):
-    class Broken:
-        async def incr(self, key):
-            raise ConnectionError("redis down")
+async def test_rate_limit_fails_open_when_db_down(monkeypatch):
+    async def broken(key, now):
+        raise ConnectionError("db down")
 
-    monkeypatch.setattr(limits, "_get_redis", lambda: Broken())
+    monkeypatch.setattr(limits, "_hit_rate_window", broken)
     await limits.enforce_rate_limit(DEV_USER_ID)   # must not raise
+
+
+@pytest.mark.asyncio
+async def test_rate_window_counts_then_resets(fresh_rate_window):
+    t0 = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+    assert (await limits._hit_rate_window(RATE_KEY, t0))[0] == 1
+    count, start = await limits._hit_rate_window(RATE_KEY, t0 + timedelta(seconds=30))
+    assert (count, start) == (2, t0)
+    count, start = await limits._hit_rate_window(RATE_KEY, t0 + timedelta(seconds=61))
+    assert (count, start) == (1, t0 + timedelta(seconds=61))
+
+
+@pytest.mark.asyncio
+async def test_retry_after_is_time_left_in_window(fresh_rate_window, monkeypatch):
+    t0 = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(settings, "RATE_LIMIT_PER_MINUTE", 1)
+    monkeypatch.setattr(limits, "_utcnow", lambda: t0)
+    await limits.enforce_rate_limit(DEV_USER_ID)
+    monkeypatch.setattr(limits, "_utcnow", lambda: t0 + timedelta(seconds=45))
+    with pytest.raises(HTTPException) as exc:
+        await limits.enforce_rate_limit(DEV_USER_ID)
+    assert exc.value.status_code == 429
+    assert exc.value.headers["Retry-After"] == "15"
 
 
 @pytest.mark.asyncio
@@ -308,6 +322,24 @@ async def test_in_flight_story_counts_toward_quota(dev_user, monkeypatch):
     try:
         assert await _enforce_and_start_story("a") is True    # takes the last slot
         assert await _enforce_and_start_story("b") is False   # in-flight story fills it
+    finally:
+        await _clear_running_stories()
+        await _set_stories_this_month(0)
+
+
+@pytest.mark.asyncio
+async def test_stale_running_story_does_not_hold_quota(dev_user, monkeypatch):
+    """A `running` row older than STALE_RUNNING_MINUTES is a dead run (e.g. Lambda timeout)."""
+    monkeypatch.setattr(limits, "_utcnow", lambda: FROZEN_NOW)
+    await _set_quota_state(settings.PLAN_LIMIT_FREE - 1, MARCH_START)
+    stale_at = FROZEN_NOW.replace(tzinfo=None) - timedelta(minutes=settings.STALE_RUNNING_MINUTES + 5)
+    async with SessionLocal() as db:
+        db.add(Story(user_id=DEV_USER_ID, topic="quota-test-stale", status=StoryStatus.running,
+                     created_at=stale_at))
+        await db.commit()
+    try:
+        assert await _enforce_and_start_story("fresh") is True    # stale row ignored
+        assert await _enforce_and_start_story("next") is False    # fresh one counts
     finally:
         await _clear_running_stories()
         await _set_stories_this_month(0)

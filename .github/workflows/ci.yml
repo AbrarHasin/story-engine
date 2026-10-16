@@ -57,7 +57,7 @@ jobs:
         run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
 
       - name: Pytest — agents
-        run: cd backend && python -m pytest tests/test_agents.py -v --tb=short
+        run: cd backend && python -m pytest tests/test_agents.py tests/test_dataapi.py tests/test_aws_runtime.py tests/test_prod_guard.py -v --tb=short
         env:
           DATABASE_URL: postgresql+asyncpg://storyengine:changeme@localhost:5432/storyengine
           REDIS_URL: redis://localhost:6379

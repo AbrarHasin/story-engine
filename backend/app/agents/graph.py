@@ -8,11 +8,10 @@ Topology:
     → synthesizer
     → END
 
-Checkpointer: Redis (langgraph-checkpoint-redis)
+Checkpointer: none by default (CHECKPOINTER=none); Redis optional for local experiments
 Observability: Langfuse callback injected per-run via config["callbacks"]
 """
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.redis import AsyncRedisSaver
 
 from app.agents.state import StoryState
 from app.agents.nodes import (
@@ -75,9 +74,21 @@ async def get_compiled_graph(checkpointer=None):
     return g.compile()
 
 
+async def get_checkpointer():
+    """Checkpointer per CHECKPOINTER: "none" (default, stateless; production) or "redis"."""
+    mode = settings.CHECKPOINTER.lower()
+    if mode == "redis":
+        return await get_redis_checkpointer()
+    if mode != "none":
+        logger.warning("Unknown CHECKPOINTER %r — running stateless", settings.CHECKPOINTER)
+    return None
+
+
 async def get_redis_checkpointer():
     """Create async Redis checkpointer for LangGraph state persistence."""
     try:
+        from langgraph.checkpoint.redis import AsyncRedisSaver  # optional; not in the Lambda image
+
         saver = AsyncRedisSaver.from_conn_string(settings.REDIS_URL)
         await saver.asetup()
         return saver

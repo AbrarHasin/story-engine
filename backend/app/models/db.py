@@ -129,3 +129,13 @@ class Payment(Base):
     confirmed_at:   Mapped[datetime | None] = mapped_column(DateTime)
 
     user: Mapped["User"] = relationship(back_populates="payments")
+
+
+# ── Rate limit window (replaces Redis, migration 0005) ────────────────────────
+
+class RateLimitWindow(Base):
+    __tablename__ = "rate_limit_window"
+
+    key:          Mapped[str]      = mapped_column(String(255), primary_key=True)   # "generate:<user_id>"
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    count:        Mapped[int]      = mapped_column(Integer, nullable=False, default=0)
