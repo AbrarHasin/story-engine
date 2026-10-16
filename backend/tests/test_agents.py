@@ -103,6 +103,52 @@ async def test_synthesizer_uses_writer_sized_cap_even_if_configured_lower():
     assert factory.call_args.kwargs["max_tokens"] >= settings.MAX_TOKENS_WRITER
 
 
+async def _run_synth(**state_over):
+    from app.agents.nodes import synthesizer_node
+
+    mock_resp = MagicMock()
+    mock_resp.content = "edited story"
+    mock_resp.usage_metadata = {"input_tokens": 10, "output_tokens": 10}
+    with patch("app.agents.nodes._llm") as factory:
+        llm = AsyncMock()
+        llm.ainvoke.return_value = mock_resp
+        factory.return_value = llm
+        out = await synthesizer_node(_base_state(story_draft="draft", **state_over))
+    messages = llm.ainvoke.call_args.args[0]
+    return out, factory, messages
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_is_critic_editor_on_tone_and_audience():
+    out, factory, messages = await _run_synth(tonality="playful", audience="teen")
+    system = str(messages[0].content).lower()
+    assert factory.call_args.args[0] == "synthesizer"
+    assert "critical editor" in system
+    for check in ("weak arguments", "unsupported facts", "tone drift", "light side", "dark side"):
+        assert check in system
+    assert "playful" in system and "teen" in system
+    assert messages[1].content == "draft"
+    assert out["final_output"] == "edited story"
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_skips_balance_check_without_both_sides():
+    _, _, messages = await _run_synth(include_dark=False)
+    assert "dark side" not in str(messages[0].content).lower()
+
+
+def test_synthesizer_runs_on_haiku_with_thinking_disabled(monkeypatch):
+    from app.core.config import settings
+    from app.llm.adapter import AnthropicAdapter
+
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "sk-ant-test-not-real")
+    a = AnthropicAdapter()
+    assert a.model_name("synthesizer") == "claude-haiku-5-5"
+    chat = a.chat("synthesizer", max_tokens=1500, temperature=0.7)  # builds client, no API call
+    assert chat.model == "claude-haiku-5-5"
+    assert chat.thinking == {"type": "disabled"}
+
+
 def test_graph_has_no_supervisor_node():
     from app.agents.graph import build_graph
     assert "supervisor" not in build_graph().nodes

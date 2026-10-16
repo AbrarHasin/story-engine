@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     # Model aliases (resolved by LiteLLM proxy or direct)
     MODEL_ROUTER: str = "claude-haiku-5-5"               # cheap, routing/sub-agents ($0.10/$0.50 per 1M)
     MODEL_WRITER: str = "claude-haiku-5-5"               # story writer ($0.10/$0.50 per 1M)
-    MODEL_SYNTHESIZER: str = "claude-sonnet-5-5"         # synthesizer/editor ($2/$10 per 1M)
+    MODEL_SYNTHESIZER: str = "claude-haiku-5-5"          # critic editor ($0.10/$0.50 per 1M)
     MODEL_PREMIUM: str = "claude-opus-4-6"               # premium plan only
 
     # Quotas and rate limits (issue #9). Plan limit = completed stories per month; 0 = unlimited.

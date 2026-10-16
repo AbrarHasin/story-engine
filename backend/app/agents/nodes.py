@@ -4,7 +4,7 @@ All LangGraph nodes.  Each node is a pure async function:
 
 Token-optimisation notes:
   - Haiku nodes: hard max_tokens caps, JSON-only output
-  - Writer/Synthesizer: Sonnet, longer output allowed
+  - Writer/Synthesizer (critic editor): Haiku 5.5, longer output allowed
   - Personality prompt cached via Anthropic prompt-caching header
 """
 import json
@@ -174,7 +174,7 @@ async def facts_node(state: StoryState) -> dict:
     return {"fact_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
 
-# ── Node 7: Story Writer (Sonnet — only premium-cost node) ───────────────────
+# ── Node 7: Story Writer (Haiku 5.5) ─────────────────────────────────────────
 
 async def writer_node(state: StoryState) -> dict:
     llm = _llm("writer", max_tokens=settings.MAX_TOKENS_WRITER, temperature=0.7)
@@ -222,22 +222,43 @@ async def writer_node(state: StoryState) -> dict:
     return {"story_draft": resp.content, "token_usage": [_usage(resp, "writer")]}
 
 
-# ── Node 8: Synthesizer / Editor (Sonnet) ────────────────────────────────────
+# ── Node 8: Synthesizer / Critic Editor (Haiku 5.5) ──────────────────────────
 
 async def synthesizer_node(state: StoryState) -> dict:
     # The editor returns the whole story, so it must never be capped below the writer.
     cap = max(settings.MAX_TOKENS_SYNTHESIZER, settings.MAX_TOKENS_WRITER)
     llm = _llm("synthesizer", max_tokens=cap, temperature=0.7)
-    system = (
-        "You are an editor. Polish and tighten the story. "
-        "Remove redundancy. Ensure tone is consistent throughout. "
-        f"Language: {state['locale']}. Return the improved full story only."
-    )
+    system = _critic_editor_prompt(state)
     resp = await llm.ainvoke([
         _system(system),
         HumanMessage(content=state.get("story_draft", "")),
     ])
     return {"final_output": resp.content, "token_usage": [_usage(resp, "synthesizer")]}
+
+
+def _critic_editor_prompt(state: StoryState) -> str:
+    checks = [
+        "Weak arguments: claims that are vague, circular or unsupported by the story itself. "
+        "Make them concrete or cut them.",
+        "Unsupported facts: numbers, dates, names or causal claims with no basis in the draft. "
+        "Remove them or soften them to what the draft supports; never invent new facts.",
+        f"Tone drift: every section must read as {state['tonality']} tone for a "
+        f"{state['audience']} audience. Rewrite passages that drift.",
+        "Redundancy: tighten repeated points and filler.",
+    ]
+    if state.get("include_light", True) and state.get("include_dark", True):
+        checks.insert(1, (
+            "Balance: the Light Side and Dark Side must be comparable in depth and fairness. "
+            "Strengthen the thinner side; do not let one side strawman the other."
+        ))
+    numbered = "\n".join(f"{i}. {c}" for i, c in enumerate(checks, 1))
+    return (
+        "You are a critical editor. Review the draft story about "
+        f"\"{state['topic']}\" against these checks:\n{numbered}\n\n"
+        "Fix every problem you find directly in the text. Keep the section headings and "
+        f"structure of the draft. Language: {state['locale']}. "
+        "Return the improved full story only, with no notes or commentary."
+    )
 
 
 # ── Routing function ──────────────────────────────────────────────────────────
