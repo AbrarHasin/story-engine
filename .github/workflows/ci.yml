@@ -86,7 +86,7 @@ jobs:
           --health-timeout=5s
           --health-retries=10
       redis:
-        image: redis:7-alpine
+        image: redis:7.2.16-alpine
         ports: ["6379:6379"]
         options: >-
           --health-cmd="redis-cli ping"
@@ -112,11 +112,11 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://storyengine:changeme@localhost:5432/storyengine
 
+      # Every backend test except test_agents.py (own job, no DB), so new test files run by default.
       - name: Pytest — API
         run: >-
-          cd backend && python -m pytest
-          tests/test_api.py tests/test_ownership.py tests/test_payment.py
-          tests/test_semantic_cache.py -v --tb=short
+          cd backend && python -m pytest tests/
+          --ignore=tests/test_agents.py -v --tb=short
         env:
           DATABASE_URL: postgresql+asyncpg://storyengine:changeme@localhost:5432/storyengine
           REDIS_URL: redis://localhost:6379

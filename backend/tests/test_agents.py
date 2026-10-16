@@ -371,7 +371,10 @@ async def test_generator_completed_at_is_current_utc(monkeypatch):
     story = _fake_story()
     await _drive(monkeypatch, _FakeGraph(_final_events()), story)
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(timezone.utc)
+    # Columns are TIMESTAMP WITH TIME ZONE (migration 0005): writes must be aware UTC.
+    assert story.completed_at.tzinfo is not None
+    assert story.completed_at.utcoffset().total_seconds() == 0
     assert abs((story.completed_at - now).total_seconds()) < 5
     assert "datetime.utcnow" not in inspect.getsource(stories)
 

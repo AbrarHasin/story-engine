@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.agents.graph import checkpointer_status
 from app.core.config import settings
 from app.core.database import engine
 from app.core.observability import get_langfuse, langfuse_configured, langfuse_reachable
@@ -105,6 +106,11 @@ async def health():
         await r.aclose()
     except Exception as e:
         checks["redis"] = f"error: {e}"
+        checks["status"] = "degraded"
+
+    # LangGraph checkpointer (T3): a stateless fallback is reported, never silent.
+    checks["checkpointer"] = checkpointer_status["status"] or "not_initialised"
+    if checks["checkpointer"] == "unavailable":
         checks["status"] = "degraded"
 
     if not langfuse_configured():

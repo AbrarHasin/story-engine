@@ -21,6 +21,9 @@ class Settings(BaseSettings):
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
+    # True: generation fails if the Redis checkpointer is unreachable instead of
+    # running stateless. Always on when APP_ENV is production.
+    CHECKPOINTER_REQUIRED: bool = False
 
     # LLM provider selection — "anthropic" (Claude API) or "local" (Docker Model Runner)
     LLM_PROVIDER: str = "anthropic"

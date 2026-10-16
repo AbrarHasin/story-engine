@@ -20,7 +20,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.2.16-alpine  # last BSD-3 release line (7.4+ is RSALv2/SSPL), see docs/licences.md
     ports:
       - "6379:6379"
     volumes:
@@ -75,7 +75,7 @@ services:
       start_period: 1s
 
   langfuse-redis:
-    image: redis:7-alpine
+    image: redis:7.2.16-alpine  # last BSD-3 release line (7.4+ is RSALv2/SSPL), see docs/licences.md
     restart: unless-stopped
     command: >
       --requirepass langfuse_redis_secret
