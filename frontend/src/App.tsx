@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate, Outlet, useLocation } from 'react-router-dom'
-import { BookOpen, User2, Library, Activity, Settings, LogOut } from 'lucide-react'
+import { BookOpen, User2, Library, Activity, Settings, LogOut, CreditCard } from 'lucide-react'
 import { clsx } from 'clsx'
 import GeneratePage from '@/pages/GeneratePage'
 import PersonalitiesPage from '@/pages/PersonalitiesPage'
@@ -7,6 +7,8 @@ import LibraryPage from '@/pages/LibraryPage'
 import StoryDetailPage from '@/pages/StoryDetailPage'
 import SettingsPage from '@/pages/SettingsPage'
 import LoginPage from '@/pages/LoginPage'
+import BillingPage from '@/pages/BillingPage'
+import BillingReturnPage from '@/pages/BillingReturnPage'
 import { useAuthStore } from '@/lib/auth'
 
 export default function App() {
@@ -27,6 +29,7 @@ export default function App() {
               <NavItem to="/" icon={<Activity size={15} />} label="Generate" />
               <NavItem to="/personalities" icon={<User2 size={15} />} label="Personalities" />
               <NavItem to="/library" icon={<Library size={15} />} label="Library" />
+              <NavItem to="/billing" icon={<CreditCard size={15} />} label="Billing" />
               <NavItem to="/settings" icon={<Settings size={15} />} label="Settings" />
             </nav>}
             <div className="ml-auto flex items-center gap-3">
@@ -62,6 +65,10 @@ export default function App() {
               <Route path="/library" element={<LibraryPage />} />
               <Route path="/stories/:id" element={<StoryDetailPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/billing" element={<BillingPage />} />
+              <Route path="/billing/success" element={<BillingReturnPage outcome="success" />} />
+              <Route path="/billing/fail" element={<BillingReturnPage outcome="fail" />} />
+              <Route path="/billing/cancel" element={<BillingReturnPage outcome="cancel" />} />
             </Route>
           </Routes>
         </main>

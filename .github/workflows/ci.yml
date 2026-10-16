@@ -38,6 +38,12 @@ jobs:
       - name: Frontend type check
         run: cd frontend && npm ci && npx tsc --noEmit
 
+      - name: Frontend unit tests
+        run: cd frontend && npm run test:unit
+
+      - name: Frontend build
+        run: cd frontend && npm run build
+
   # ── Agent unit tests (mocked LLM, no infra needed) ──────────────────────────
   test-agents:
     name: Test — Agents
