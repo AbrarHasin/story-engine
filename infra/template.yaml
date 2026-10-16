@@ -3,8 +3,10 @@ Transform: AWS::Serverless-2016-10-31
 Description: >
   Story Engine on AWS, spec 002 Option S (decisions D1-D9, 2026-10-16): us-east-1,
   Anthropic API, Langfuse local only (tracing OFF here), Aurora Serverless v2 via the
-  RDS Data API, one Lambda image behind API Gateway REST in STREAM mode, SPA on
-  S3 + CloudFront, Route 53 sub-zone. Tasks T010, T011, T020, T022, T031, T036.
+  RDS Data API, two Lambdas split by route behind API Gateway REST (ADR split-api-graph:
+  story-api BUFFERED for every route, story-graph STREAM for POST
+  /api/v1/stories/generate), SPA on S3 + CloudFront, Route 53 sub-zone. Tasks T010,
+  T011, T020, T022, T031, T036.
   Needs infra/bootstrap.yaml deployed first (OIDC role, ECR, artifact bucket,
   hosted zone, budget) and the zone NS-delegated from Cloudflare (T023), because
   the ACM certificate below validates by DNS in that zone. See docs/runbook-aws.md.
@@ -31,7 +33,10 @@ Parameters:
     Type: Number
     Default: 20
     MinValue: 1
-    Description: Caps parallel stories (cost and abuse ceiling, replaces nginx limits).
+    Description: >
+      story-graph reserved concurrency: caps parallel stories (LLM spend, Aurora load,
+      abuse ceiling). story-api is not reserved, so a burst of generations cannot starve
+      login and CRUD.
   ApiRateLimit:
     Type: Number
     Default: 10
@@ -74,7 +79,7 @@ Parameters:
     Type: String
     Default: 'false'
     AllowedValues: ['true', 'false']
-    Description: Grant story-api bedrock:InvokeModel* (off by default; no Bedrock adapter yet).
+    Description: Grant story-graph bedrock:InvokeModel* (off by default; no Bedrock adapter yet).
 
 Conditions:
   UseBedrock: !Equals [!Ref UseBedrock, 'true']
@@ -159,25 +164,28 @@ Resources:
       DBClusterIdentifier: !Ref AuroraCluster
       PubliclyAccessible: false
 
-  # ============================================================== T010 / T020 Lambda
-  # Runtime config contract with the app (worker-aws-app, T013-T021):
-  # - secrets: SecureString parameters under SSM_PARAMETER_PATH, read once at cold
-  #   start (CloudFormation cannot create SecureStrings and Lambda env vars cannot
-  #   use ssm-secure references; the runbook creates them). Names = Settings fields:
-  #   ANTHROPIC_API_KEY, JWT_SECRET_KEY, SSLCOMMERZ_STORE_ID, SSLCOMMERZ_STORE_PASS.
-  # - database: DB_BACKEND=dataapi + DATAAPI_* (no DATABASE_URL, no password),
-  #   names as in backend/.env.lambda.example (branch aws-app).
-  # - tracing: TRACING_ENABLED=false, no LANGFUSE_* keys (D5); prod_guard must
-  #   accept that instead of demanding Langfuse keys.
+  # ============================================================== T010 / T020 Lambdas
+  # ADR split-api-graph (2026-10-16): two functions split BY ROUTE at API Gateway,
+  # no Lambda-to-Lambda call. story-api serves every route except generation;
+  # story-graph serves only POST /api/v1/stories/generate (LangGraph, LLM SDK, ONNX
+  # semantic cache). Each gets its own memory, timeout, concurrency cap, image and IAM.
+  #
+  # Runtime config contract with the app (branch aws-app, backend/.env.lambda.example):
+  # - secrets: SecureStrings, never env vars. app.core.ssm loads every parameter
+  #   directly under each SSM_PARAMETER_PATH entry at cold start (GetParametersByPath,
+  #   WithDecryption). Paths: shared/ (JWT_SECRET_KEY, SSLCOMMERZ_STORE_ID,
+  #   SSLCOMMERZ_STORE_PASS) for both functions; graph/ (ANTHROPIC_API_KEY) for
+  #   story-graph only, so story-api can never read the LLM key.
+  # - database: DB_BACKEND=dataapi + DATAAPI_* (no DATABASE_URL, no password).
+  # - tracing: TRACING_ENABLED=false, no LANGFUSE_* keys (D5).
   StoryApiFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub '${AWS::StackName}-story-api'
       PackageType: Image
-      Description: FastAPI + LangGraph behind Lambda Web Adapter, response streaming
-      MemorySize: 2048
-      Timeout: 900
-      ReservedConcurrentExecutions: !Ref ReservedConcurrency
+      Description: FastAPI (auth, stories CRUD, personalities, payments, llm config, health), buffered
+      MemorySize: 512
+      Timeout: 30
       AutoPublishAlias: live
       DeploymentPreference:
         # T031: CodeDeploy publishes the new version, runs the migrate hook
@@ -191,7 +199,8 @@ Resources:
       Environment:
         Variables:
           APP_ENV: production
-          LLM_PROVIDER: !Ref LlmProvider
+          RUN_ROLE: api
+          LLM_PROVIDER: !Ref LlmProvider   # shown by /api/v1/llm/config; no LLM call here
           MODEL_ROUTER: !Ref ModelRouter
           MODEL_WRITER: !Ref ModelWriter
           MODEL_SYNTHESIZER: !Ref ModelSynthesizer
@@ -200,17 +209,15 @@ Resources:
           DATAAPI_RESOURCE_ARN: !GetAtt AuroraCluster.DBClusterArn
           DATAAPI_SECRET_ARN: !GetAtt AuroraCluster.MasterUserSecret.SecretArn
           DATAAPI_DATABASE: storyengine
-          DATAAPI_RESUME_TIMEOUT_SECONDS: '45'
-          SSM_PARAMETER_PATH: !Sub '/story-engine/${Stage}/'
+          DATAAPI_RESUME_TIMEOUT_SECONDS: '20'   # stays under the 29 s API Gateway limit
+          SSM_PARAMETER_PATH: !Sub '/story-engine/${Stage}/shared/'
           CHECKPOINTER: none
           REDIS_URL: ''
           FRONTEND_URL: !Sub 'https://${SiteDomain}'
           BACKEND_PUBLIC_URL: !Sub 'https://${ApiDomain}'
           BACKEND_CORS_ORIGINS: !Sub '["https://${SiteDomain}"]'
           SSLCOMMERZ_SANDBOX: !Ref SslcommerzSandbox
-          SEMANTIC_CACHE_ENABLED: !Ref SemanticCacheEnabled
-          RUN_DEADLINE_SECONDS: '600'
-          AWS_LWA_INVOKE_MODE: response_stream
+          AWS_LWA_INVOKE_MODE: buffered
           AWS_LWA_PORT: '8080'
           AWS_LWA_READINESS_CHECK_PATH: /health
       Policies:
@@ -230,11 +237,86 @@ Resources:
               Resource: !GetAtt AuroraCluster.MasterUserSecret.SecretArn
             - Effect: Allow
               Action: [ssm:GetParametersByPath, ssm:GetParameters, ssm:GetParameter]
+              # shared/ only: no access to graph/ANTHROPIC_API_KEY.
               # GetParametersByPath is authorized on the path itself, Get* on the names under it.
               Resource:
-                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}'
-                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}/*'
+                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}/shared'
+                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}/shared/*'
             # SecureStrings use the AWS-managed aws/ssm key; decrypt only via SSM.
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*'
+              Condition:
+                StringEquals:
+                  kms:ViaService: !Sub 'ssm.${AWS::Region}.amazonaws.com'
+    Metadata:
+      Dockerfile: Dockerfile.lambda   # backend/Dockerfile.lambda (aws-app)
+      DockerContext: ../backend
+      DockerBuildTarget: api
+      DockerTag: latest
+
+  StoryGraphFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-story-graph'
+      PackageType: Image
+      Description: POST /api/v1/stories/generate, LangGraph + semantic cache, response streaming
+      MemorySize: 2048
+      Timeout: 900
+      ReservedConcurrentExecutions: !Ref ReservedConcurrency
+      AutoPublishAlias: live
+      DeploymentPreference:
+        # Same migrate hook: whichever function deploys first migrates, the other finds
+        # the schema at head (alembic upgrade is idempotent). MigrateFunction has
+        # reserved concurrency 1, so the two hooks never migrate in parallel.
+        Type: AllAtOnce
+        Hooks:
+          PreTraffic: !Ref MigrateFunction
+        Alarms:
+          - !Ref StoryGraphErrorsAlarm
+      Environment:
+        Variables:
+          APP_ENV: production
+          RUN_ROLE: graph
+          LLM_PROVIDER: !Ref LlmProvider
+          MODEL_ROUTER: !Ref ModelRouter
+          MODEL_WRITER: !Ref ModelWriter
+          MODEL_SYNTHESIZER: !Ref ModelSynthesizer
+          TRACING_ENABLED: 'false'
+          DB_BACKEND: dataapi
+          DATAAPI_RESOURCE_ARN: !GetAtt AuroraCluster.DBClusterArn
+          DATAAPI_SECRET_ARN: !GetAtt AuroraCluster.MasterUserSecret.SecretArn
+          DATAAPI_DATABASE: storyengine
+          DATAAPI_RESUME_TIMEOUT_SECONDS: '45'
+          SSM_PARAMETER_PATH: !Sub '/story-engine/${Stage}/shared/,/story-engine/${Stage}/graph/'
+          CHECKPOINTER: none
+          REDIS_URL: ''
+          BACKEND_CORS_ORIGINS: !Sub '["https://${SiteDomain}"]'
+          SEMANTIC_CACHE_ENABLED: !Ref SemanticCacheEnabled
+          RUN_DEADLINE_SECONDS: '600'
+          AWS_LWA_INVOKE_MODE: response_stream
+          AWS_LWA_PORT: '8080'
+          AWS_LWA_READINESS_CHECK_PATH: /health
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - rds-data:ExecuteStatement
+                - rds-data:BatchExecuteStatement
+                - rds-data:BeginTransaction
+                - rds-data:CommitTransaction
+                - rds-data:RollbackTransaction
+              Resource: !GetAtt AuroraCluster.DBClusterArn
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !GetAtt AuroraCluster.MasterUserSecret.SecretArn
+            - Effect: Allow
+              Action: [ssm:GetParametersByPath, ssm:GetParameters, ssm:GetParameter]
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}/shared'
+                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}/shared/*'
+                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}/graph'
+                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}/graph/*'
             - Effect: Allow
               Action: kms:Decrypt
               Resource: !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*'
@@ -255,14 +337,15 @@ Resources:
     Metadata:
       Dockerfile: Dockerfile.lambda   # backend/Dockerfile.lambda (aws-app)
       DockerContext: ../backend
-      DockerBuildTarget: api
+      DockerBuildTarget: graph
       DockerTag: latest
 
   # Same Dockerfile, target migrate: the AWS Lambda Python base image with handler
   # app.migrate.handler (alembic upgrade head over the Data API). No Lambda Web Adapter.
-  # As the CodeDeploy PreTraffic hook the handler must report
+  # PreTraffic hook of both functions: it reports
   # codedeploy:PutLifecycleEventHookExecutionStatus Succeeded/Failed when the event
   # carries DeploymentId + LifecycleEventHookExecutionId (runbook section 9).
+  # Reserved concurrency 1: two hooks of one stack update run one after the other.
   # The name must start with CodeDeployHook_ for SAM's CodeDeploy service role.
   MigrateFunction:
     Type: AWS::Serverless::Function
@@ -274,6 +357,7 @@ Resources:
       Description: alembic upgrade head, run as the CodeDeploy PreTraffic hook
       MemorySize: 1024
       Timeout: 900
+      ReservedConcurrentExecutions: 1
       Environment:
         Variables:
           APP_ENV: production
@@ -283,7 +367,6 @@ Resources:
           DATAAPI_SECRET_ARN: !GetAtt AuroraCluster.MasterUserSecret.SecretArn
           DATAAPI_DATABASE: storyengine
           DATAAPI_RESUME_TIMEOUT_SECONDS: '45'
-          SSM_PARAMETER_PATH: !Sub '/story-engine/${Stage}/'
       Policies:
         - Statement:
             - Effect: Allow
@@ -297,18 +380,6 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource: !GetAtt AuroraCluster.MasterUserSecret.SecretArn
-            - Effect: Allow
-              Action: [ssm:GetParametersByPath, ssm:GetParameters, ssm:GetParameter]
-              # GetParametersByPath is authorized on the path itself, Get* on the names under it.
-              Resource:
-                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}'
-                - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/story-engine/${Stage}/*'
-            - Effect: Allow
-              Action: kms:Decrypt
-              Resource: !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*'
-              Condition:
-                StringEquals:
-                  kms:ViaService: !Sub 'ssm.${AWS::Region}.amazonaws.com'
             - Effect: Allow
               Action: codedeploy:PutLifecycleEventHookExecutionStatus
               Resource: !Sub 'arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:${ServerlessDeploymentApplication}/*'
@@ -324,6 +395,12 @@ Resources:
       LogGroupName: !Sub '/aws/lambda/${StoryApiFunction}'
       RetentionInDays: 14
 
+  StoryGraphLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${StoryGraphFunction}'
+      RetentionInDays: 14
+
   MigrateLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -331,10 +408,15 @@ Resources:
       RetentionInDays: 14
 
   # ============================================================== T020 API Gateway
-  # REST API, Regional, Lambda proxy with response transfer mode STREAM (the only
-  # AWS edge that streams SSE from Lambda: 15 min max, 5 min idle). Streaming
-  # needs the 2021-11-15 .../response-streaming-invocations URI. The default
-  # execute-api endpoint is off: the only way in is api.storyteller.*.
+  # REST API, Regional, split by route (ADR split-api-graph):
+  # - POST (and the CORS preflight OPTIONS) /api/v1/stories/generate -> story-graph,
+  #   response transfer mode STREAM (the only AWS edge that streams SSE from Lambda:
+  #   15 min max, 5 min idle; needs the 2021-11-15 .../response-streaming-invocations URI).
+  # - everything else -> story-api, standard BUFFERED proxy (29 s integration limit).
+  #   /api, /api/v1 and /api/v1/stories exist as parents of the generate resource, so
+  #   they map to story-api explicitly; otherwise e.g. GET /api/v1/stories/ would hit a
+  #   resource with no method instead of the greedy proxy.
+  # The default execute-api endpoint is off: the only way in is api.storyteller.*.
   # SPIKE FIRST (tasks.md T020): LWA response_stream output behind REST STREAM is
   # unverified; fallback = function URL behind CloudFront (research.md R1).
   StoryApi:
@@ -361,11 +443,56 @@ Resources:
               x-amazon-apigateway-integration:
                 type: aws_proxy
                 httpMethod: POST
+                timeoutInMillis: 29000
+                uri: !Sub
+                  - 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AliasArn}/invocations'
+                  - AliasArn: !Ref StoryApiFunction.Alias
+          /api:
+            x-amazon-apigateway-any-method:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                timeoutInMillis: 29000
+                uri: !Sub
+                  - 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AliasArn}/invocations'
+                  - AliasArn: !Ref StoryApiFunction.Alias
+          /api/v1:
+            x-amazon-apigateway-any-method:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                timeoutInMillis: 29000
+                uri: !Sub
+                  - 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AliasArn}/invocations'
+                  - AliasArn: !Ref StoryApiFunction.Alias
+          /api/v1/stories:
+            x-amazon-apigateway-any-method:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                timeoutInMillis: 29000
+                uri: !Sub
+                  - 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AliasArn}/invocations'
+                  - AliasArn: !Ref StoryApiFunction.Alias
+          /api/v1/stories/generate:
+            post:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
                 responseTransferMode: STREAM
                 timeoutInMillis: 900000
                 uri: !Sub
                   - 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2021-11-15/functions/${AliasArn}/response-streaming-invocations'
-                  - AliasArn: !Ref StoryApiFunction.Alias
+                  - AliasArn: !Ref StoryGraphFunction.Alias
+            options:
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                responseTransferMode: STREAM
+                timeoutInMillis: 900000
+                uri: !Sub
+                  - 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2021-11-15/functions/${AliasArn}/response-streaming-invocations'
+                  - AliasArn: !Ref StoryGraphFunction.Alias
           /{proxy+}:
             x-amazon-apigateway-any-method:
               parameters:
@@ -376,10 +503,9 @@ Resources:
               x-amazon-apigateway-integration:
                 type: aws_proxy
                 httpMethod: POST
-                responseTransferMode: STREAM
-                timeoutInMillis: 900000
+                timeoutInMillis: 29000
                 uri: !Sub
-                  - 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2021-11-15/functions/${AliasArn}/response-streaming-invocations'
+                  - 'arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AliasArn}/invocations'
                   - AliasArn: !Ref StoryApiFunction.Alias
 
   StoryApiInvokePermission:
@@ -389,6 +515,22 @@ Resources:
       FunctionName: !Ref StoryApiFunction.Alias
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${StoryApi}/*'
+
+  StoryGraphInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref StoryGraphFunction.Alias
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${StoryApi}/*/POST/api/v1/stories/generate'
+
+  StoryGraphPreflightPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref StoryGraphFunction.Alias
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${StoryApi}/*/OPTIONS/api/v1/stories/generate'
 
   # ============================================================== T022 edge
   # One certificate for both names (us-east-1 serves CloudFront and the Regional
@@ -539,7 +681,7 @@ Resources:
         - Protocol: email
           Endpoint: !Ref AlarmEmail
 
-  # Also the CodeDeploy rollback alarm for a deploy.
+  # Also the CodeDeploy rollback alarm for a story-api deploy.
   StoryApiErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
@@ -558,7 +700,7 @@ Resources:
   StoryApiThrottlesAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: story-api hit its reserved concurrency
+      AlarmDescription: story-api throttled (account concurrency exhausted)
       Namespace: AWS/Lambda
       MetricName: Throttles
       Dimensions: [{Name: FunctionName, Value: !Ref StoryApiFunction}]
@@ -573,10 +715,56 @@ Resources:
   StoryApiDurationP95Alarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmDescription: story-api p95 duration above 5 min (app deadline is 600 s)
+      AlarmDescription: story-api p95 duration above 10 s (timeout is 30 s)
       Namespace: AWS/Lambda
       MetricName: Duration
       Dimensions: [{Name: FunctionName, Value: !Ref StoryApiFunction}]
+      ExtendedStatistic: p95
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 10000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  # Also the CodeDeploy rollback alarm for a story-graph deploy.
+  StoryGraphErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: story-graph Lambda errors (unhandled exceptions, timeouts)
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{Name: FunctionName, Value: !Sub '${AWS::StackName}-story-graph'}]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  StoryGraphThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: story-graph throttled (hit its reserved concurrency)
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions: [{Name: FunctionName, Value: !Ref StoryGraphFunction}]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  StoryGraphDurationP95Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: story-graph p95 duration above 5 min (app deadline is 600 s)
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions: [{Name: FunctionName, Value: !Ref StoryGraphFunction}]
       ExtendedStatistic: p95
       Period: 900
       EvaluationPeriods: 1
@@ -630,6 +818,8 @@ Outputs:
     Value: !Ref SpaDistribution
   StoryApiFunctionName:
     Value: !Ref StoryApiFunction
+  StoryGraphFunctionName:
+    Value: !Ref StoryGraphFunction
   MigrateFunctionName:
     Value: !Ref MigrateFunction
   AuroraClusterArn:

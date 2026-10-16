@@ -5,10 +5,11 @@
 # the AWS role trusts only that environment (infra/bootstrap.yaml), so protect it
 # with required reviewers.
 #
-# Deploy = build one arm64 image -> push to ECR -> sam deploy. Inside sam deploy,
-# CodeDeploy publishes a new story-api version, runs the migrate Lambda as the
-# PreTraffic hook (alembic upgrade head), then shifts the `live` alias. A failed
-# migration or the errors alarm rolls the alias back automatically.
+# Deploy = build the three arm64 image targets (api, graph, migrate; ADR
+# split-api-graph) -> push to ECR -> sam deploy. Inside sam deploy, CodeDeploy
+# publishes new story-api and story-graph versions, runs the migrate Lambda as each
+# one's PreTraffic hook (alembic upgrade head), then shifts each `live` alias. A
+# failed migration or that function's errors alarm rolls its alias back.
 # Rollback = action "rollback": point `live` at an earlier version.
 #
 # Repo variables (Settings > Variables), all from the bootstrap stack outputs:
@@ -24,8 +25,13 @@ on:
         type: choice
         options: [deploy, rollback]
         default: deploy
+      rollback_function:
+        description: "rollback only: which function"
+        type: choice
+        options: [both, story-api, story-graph]
+        default: both
       rollback_version:
-        description: "rollback only: story-api version number to point live at (empty = previous)"
+        description: "rollback only, single function only: version number to point live at (empty = previous)"
         type: string
         required: false
       smoke:
@@ -93,7 +99,7 @@ jobs:
         with:
           use-installer: true
 
-      - name: Build image
+      - name: Build images (api, graph, migrate)
         working-directory: infra
         run: sam build --config-env prod
 
@@ -104,6 +110,7 @@ jobs:
             --no-confirm-changeset \
             --s3-bucket "${{ vars.SAM_ARTIFACT_BUCKET }}" \
             --image-repositories "StoryApiFunction=${{ vars.ECR_REPOSITORY_URI }}" \
+            --image-repositories "StoryGraphFunction=${{ vars.ECR_REPOSITORY_URI }}" \
             --image-repositories "MigrateFunction=${{ vars.ECR_REPOSITORY_URI }}" \
             --role-arn "${{ vars.AWS_CFN_EXEC_ROLE_ARN }}" \
             --parameter-overrides Stage=prod BootstrapStackName=story-engine-bootstrap \
@@ -166,18 +173,30 @@ jobs:
 
       - name: Point live at an earlier version
         env:
-          TARGET: ${{ inputs.rollback_version }}
+          WHICH: ${{ inputs.rollback_function }}
+          VERSION: ${{ inputs.rollback_version }}
         run: |
-          fn="$STACK_NAME-story-api"
-          cur=$(aws lambda get-alias --function-name "$fn" --name live --query FunctionVersion --output text)
-          if [ -z "$TARGET" ]; then
-            TARGET=$(aws lambda list-versions-by-function --function-name "$fn" \
-                       --query "Versions[?Version!='\$LATEST'].Version" --output text \
-                     | tr '\t' '\n' | sort -n | awk -v c="$cur" '$1 < c' | tail -1)
+          case "$WHICH" in
+            both) fns="story-api story-graph" ;;
+            *)    fns="$WHICH" ;;
+          esac
+          if [ "$WHICH" = both ] && [ -n "$VERSION" ]; then
+            echo "a version number needs a single function (versions differ per function)" >&2
+            exit 1
           fi
-          test -n "$TARGET" || { echo "no earlier version than $cur" >&2; exit 1; }
-          echo "live: $cur -> $TARGET"
-          aws lambda update-alias --function-name "$fn" --name live --function-version "$TARGET"
+          for name in $fns; do
+            fn="$STACK_NAME-$name"
+            TARGET="$VERSION"
+            cur=$(aws lambda get-alias --function-name "$fn" --name live --query FunctionVersion --output text)
+            if [ -z "$TARGET" ]; then
+              TARGET=$(aws lambda list-versions-by-function --function-name "$fn" \
+                         --query "Versions[?Version!='\$LATEST'].Version" --output text \
+                       | tr '\t' '\n' | sort -n | awk -v c="$cur" '$1 < c' | tail -1)
+            fi
+            test -n "$TARGET" || { echo "$fn: no earlier version than $cur" >&2; exit 1; }
+            echo "$fn live: $cur -> $TARGET"
+            aws lambda update-alias --function-name "$fn" --name live --function-version "$TARGET"
+          done
           echo "Schema is NOT rolled back. See docs/runbook-aws.md (Rollback)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Smoke /health

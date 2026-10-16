@@ -6,7 +6,7 @@ version = 0.1
 # come from that stack's outputs; CI passes them as flags from GitHub repo
 # variables, so nothing account-specific is committed here.
 #   --s3-bucket          <ArtifactBucketName>
-#   --image-repositories StoryApiFunction=<ImageRepositoryUri> MigrateFunction=<ImageRepositoryUri>
+#   --image-repositories StoryApiFunction=<ImageRepositoryUri> StoryGraphFunction=<ImageRepositoryUri> MigrateFunction=<ImageRepositoryUri>
 #   --role-arn           <CfnExecutionRoleArn>
 #   --parameter-overrides AlarmEmail=<address>
 # No secrets here: secret values live in SSM SecureString (docs/runbook-aws.md).

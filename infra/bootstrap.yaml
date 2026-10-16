@@ -191,7 +191,8 @@ Resources:
                 Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AppStackName}-*'
 
   # ------------------------------------------------------------ T009: ECR
-  # One repository; both functions (story-api, migrate) use the same image.
+  # One repository for the three image targets (story-api, story-graph, migrate);
+  # a deploy pushes three images, so 10 kept images cover about the last three deploys.
   ImageRepository:
     Type: AWS::ECR::Repository
     Properties:
