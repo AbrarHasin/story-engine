@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://news-lens.local/contracts/sse-events.schema.json",
+  "title": "News Lens report SSE events",
+  "description": "Each SSE message is `event: <name>` + `data: <json>`. The `data` object MUST match the schema selected by `event`. Order: start, topic, then any of stage/timeline/perspective/claim/rating/section, then exactly one of done or error. Pilot event names start/node_complete/done/error are kept; node_complete is emitted alongside stage for pilot-compatible clients.",
+  "type": "object",
+  "required": ["event", "data"],
+  "properties": {
+    "event": {
+      "enum": ["start", "topic", "stage", "node_complete", "timeline", "perspective", "claim", "rating", "section", "done", "error"]
+    },
+    "data": { "type": "object" }
+  },
+  "allOf": [
+    { "if": { "properties": { "event": { "const": "start" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/start" } } } },
+    { "if": { "properties": { "event": { "const": "topic" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/topic" } } } },
+    { "if": { "properties": { "event": { "const": "stage" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/stage" } } } },
+    { "if": { "properties": { "event": { "const": "node_complete" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/node_complete" } } } },
+    { "if": { "properties": { "event": { "const": "timeline" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/timeline" } } } },
+    { "if": { "properties": { "event": { "const": "perspective" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/perspective" } } } },
+    { "if": { "properties": { "event": { "const": "claim" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/claim" } } } },
+    { "if": { "properties": { "event": { "const": "rating" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/rating" } } } },
+    { "if": { "properties": { "event": { "const": "section" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/section" } } } },
+    { "if": { "properties": { "event": { "const": "done" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/done" } } } },
+    { "if": { "properties": { "event": { "const": "error" } } }, "then": { "properties": { "data": { "$ref": "#/$defs/error" } } } }
+  ],
+  "$defs": {
+    "uuid": { "type": "string", "format": "uuid" },
+    "ratingValue": { "enum": ["verified", "mostly_true", "mixed", "unproven", "misleading", "false"] },
+    "tier": { "enum": ["primary", "established", "state", "independent", "factchecker", "social"] },
+    "sourceRef": {
+      "type": "object",
+      "required": ["id", "name", "tier"],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "name": { "type": "string" },
+        "tier": { "$ref": "#/$defs/tier" },
+        "state_media": { "type": "boolean" }
+      }
+    },
+    "start": {
+      "type": "object",
+      "required": ["report_id", "cache_hit"],
+      "properties": {
+        "report_id": { "$ref": "#/$defs/uuid" },
+        "cache_hit": { "type": "boolean" },
+        "cached_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "topic": {
+      "type": "object",
+      "required": ["needs_choice"],
+      "properties": {
+        "needs_choice": { "type": "boolean" },
+        "title": { "type": "string" },
+        "type": { "enum": ["breaking", "recent", "historical"] },
+        "span_start": { "type": ["string", "null"] },
+        "span_end": { "type": ["string", "null"] },
+        "entities": { "type": "array", "items": { "type": "object", "required": ["name", "kind"], "properties": { "name": { "type": "string" }, "kind": { "type": "string" }, "living": { "type": ["boolean", "null"] } } } },
+        "candidates": {
+          "type": "array",
+          "description": "Present when needs_choice is true; the stream then ends with done (status needs_choice).",
+          "items": { "type": "object", "required": ["id", "title"], "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "description": { "type": "string" } } }
+        }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "required": ["stage", "status"],
+      "properties": {
+        "stage": { "enum": ["resolve", "retrieve", "extract", "cluster", "stance", "claims", "factchecks", "evidence", "verify", "validate", "narrate", "publish"] },
+        "status": { "enum": ["started", "completed", "degraded", "skipped"] },
+        "counts": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "degraded_reason": { "type": "string" },
+        "tokens": { "$ref": "#/$defs/tokens" }
+      }
+    },
+    "node_complete": {
+      "type": "object",
+      "required": ["node"],
+      "properties": { "node": { "type": "string" }, "tokens": { "$ref": "#/$defs/tokens" } }
+    },
+    "timeline": {
+      "type": "object",
+      "required": ["events"],
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": { "type": "object", "required": ["date", "label", "source_count"], "properties": { "date": { "type": "string" }, "date_precision": { "enum": ["day", "month", "year"] }, "label": { "type": "string" }, "source_count": { "type": "integer" } } }
+        }
+      }
+    },
+    "perspective": {
+      "type": "object",
+      "required": ["id", "kind", "summary", "coverage_share", "holders"],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "kind": { "enum": ["mainstream", "other", "also_circulating"] },
+        "key_question": { "type": "string" },
+        "stance": { "type": "string" },
+        "summary": { "type": "string" },
+        "coverage_share": { "type": "number", "minimum": 0, "maximum": 1 },
+        "holders": {
+          "type": "array",
+          "items": { "type": "object", "required": ["role", "url"], "properties": { "role": { "enum": ["outlet", "person", "institution", "filing"] }, "name": { "type": "string" }, "source": { "$ref": "#/$defs/sourceRef" }, "url": { "type": "string", "format": "uri" }, "nofollow": { "type": "boolean" } } }
+        }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "required": ["id", "text", "checkable"],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "text": { "type": "string" },
+        "speaker": { "type": "string" },
+        "checkable": { "type": "boolean" },
+        "perspective_id": { "type": ["string", "null"] },
+        "living_person_named": { "type": "boolean" }
+      }
+    },
+    "rating": {
+      "type": "object",
+      "required": ["claim_id", "status"],
+      "properties": {
+        "claim_id": { "$ref": "#/$defs/uuid" },
+        "status": { "enum": ["published", "held_for_review", "not_checkable"] },
+        "value": { "$ref": "#/$defs/ratingValue" },
+        "confidence": { "enum": ["high", "medium", "low"] },
+        "reason": { "type": "string" },
+        "basis": { "enum": ["existing_factcheck", "model", "human", "cache"] },
+        "evidence": {
+          "type": "array",
+          "maxItems": 5,
+          "items": { "type": "object", "required": ["id", "quote", "url", "source", "stance"], "properties": { "id": { "$ref": "#/$defs/uuid" }, "quote": { "type": "string", "maxLength": 300 }, "url": { "type": "string", "format": "uri" }, "source": { "$ref": "#/$defs/sourceRef" }, "stance": { "enum": ["supports", "refutes", "context"] } } }
+        }
+      },
+      "if": { "properties": { "status": { "const": "published" } } },
+      "then": { "required": ["claim_id", "status", "value", "confidence", "reason", "basis", "evidence"] }
+    },
+    "section": {
+      "type": "object",
+      "required": ["section", "text"],
+      "properties": {
+        "section": { "enum": ["mainstream", "other", "also_circulating", "summary"] },
+        "perspective_id": { "type": ["string", "null"] },
+        "text": { "type": "string", "description": "Validated sentences only; each carries [e:<evidence_id>] markers." }
+      }
+    },
+    "tokens": {
+      "type": "object",
+      "properties": { "input": { "type": "integer" }, "output": { "type": "integer" }, "cost_usd": { "type": "number" } }
+    },
+    "done": {
+      "type": "object",
+      "required": ["report_id", "status", "tokens", "cache_hit"],
+      "properties": {
+        "report_id": { "$ref": "#/$defs/uuid" },
+        "status": { "enum": ["completed", "partial", "needs_choice"] },
+        "tokens": { "$ref": "#/$defs/tokens" },
+        "search_cost_usd": { "type": "number" },
+        "cache_hit": { "type": "boolean" },
+        "held_for_review": { "type": "integer" },
+        "trace_url": { "type": ["string", "null"] }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "enum": ["internal_error", "quota_exceeded", "rate_limited", "refused_topic", "deadline", "provider_unavailable"] },
+        "message": { "type": "string" },
+        "report_id": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

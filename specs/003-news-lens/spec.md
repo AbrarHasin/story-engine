@@ -120,7 +120,7 @@ Popular topics are answered from cache, and claims already verified are reused a
 
 **Retrieval**
 
-- **FR-005**: The system MUST ingest the curated RSS feeds from the source directory (about 171 feeds today) on a schedule (default every 30 min), storing metadata, lede snippet and embedding, deduplicated by canonical URL and content hash.
+- **FR-005**: The system MUST ingest the curated RSS feeds from the source directory (171 validated feeds plus 64 more passing feeds in the hive research file, about 235 today) on a schedule (default every 30 min), storing metadata, lede snippet and embedding, deduplicated by canonical URL and content hash.
 - **FR-006**: On a query the system MUST combine: the local article index, GDELT DOC search, Wikipedia (and its references), the Wayback Machine for archived copies, Google Fact Check Tools (ClaimReview), and court records (CourtListener) for legal topics; a paid news search API is optional and behind a feature flag.
 - **FR-007**: Full text MUST be extracted only from sources whose robots.txt and terms allow it, with an identifying User-Agent and per-domain rate limits; otherwise only metadata and lede are used.
 - **FR-008**: Articles MUST be clustered into events (near-duplicate and syndication detection plus embedding clustering) and ordered into a timeline; syndicated copies MUST count as one source family.

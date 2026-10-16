@@ -118,7 +118,7 @@ Confidence: `high` (3+ independent strong families agree), `medium` (2), `low` (
 
 ## R6. Evaluation (no LLM calls during planning)
 
-- **Gold set** (Phase 1, task T060): at least 300 claims with known verdicts:
+- **Gold set** (Phase 1, task T059): at least 300 claims with known verdicts:
   - 200 sampled from ClaimReview records via Fact Check Tools across at least 8 IFCN publishers (AFP Fact Check, PolitiFact, Full Fact, Snopes, Reuters Fact Check, Lead Stories, Africa Check, Boom), stratified by verdict and topic; verdicts mapped with the R4 table. The verifier must be run with the publisher's own article excluded from evidence (no answer leakage).
   - 100 from public research sets where licences allow evaluation use: AVeriTeC (real-world claims with evidence; check licence), LIAR (PolitiFact statements), FEVER (Wikipedia-based, CC BY-SA). Licences to verify before use.
 - **Metrics**: exact agreement and within-one-step agreement on the ordinal scale; macro-F1; `True`-vs-`False` inversion rate; calibration (expected calibration error by confidence level); `Unproven` rate on claims with thin evidence (should be high); citation validity (resolves + quote verbatim, target 100 %); unsupported-sentence rate in narratives; living-person hold recall (target 100 %); cost and latency per report.

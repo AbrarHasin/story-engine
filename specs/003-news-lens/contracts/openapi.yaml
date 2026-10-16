@@ -1,0 +1,556 @@
+openapi: 3.1.0
+info:
+  title: News Lens public API
+  version: 0.1.0-draft
+  description: |
+    Planning contract for spec 003-news-lens. Auth, quotas and payments reuse the
+    Story Engine pilot (`/api/v1/auth/*`, `/api/v1/payment/*`) and are not repeated here.
+    Report generation streams Server-Sent Events over a POST response (fetch-based client);
+    event payloads are defined in `sse-events.schema.json`.
+  license:
+    name: GPL-3.0
+servers:
+  - url: http://localhost:8080
+    description: local Docker stack
+security:
+  - bearerAuth: []
+tags:
+  - name: reports
+  - name: claims
+  - name: sources
+  - name: trust
+  - name: review
+  - name: journalist
+paths:
+  /api/v1/reports:
+    post:
+      tags: [reports]
+      summary: Build (or replay from cache) a report for a topic; streams SSE
+      description: |
+        Counts one quota unit unless served from cache. `force_refresh` bypasses the
+        report cache and always counts. Returns 402 when the quota is exhausted, 429 when
+        rate limited, 422 when a cheap pre-check refuses the topic (length, blocklisted
+        terms). Refusals decided by the topic resolver (private individual, minor) arrive
+        inside the stream as an `error` event with code `refused_topic`, at zero quota cost.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReportRequest' }
+      responses:
+        '200':
+          description: SSE stream (`text/event-stream`), events per sse-events.schema.json
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/QuotaExceeded' }
+        '422': { $ref: '#/components/responses/Refused' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    get:
+      tags: [reports]
+      summary: List reports (own reports, or public reports by topic query)
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: mine, in: query, schema: { type: boolean, default: false } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: Page of report summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page, page_size, total]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ReportSummary' } }
+                  page: { type: integer }
+                  page_size: { type: integer }
+                  total: { type: integer }
+  /api/v1/reports/{report_id}:
+    get:
+      tags: [reports]
+      summary: Get a completed report
+      security: []
+      parameters: [ { $ref: '#/components/parameters/ReportId' } ]
+      responses:
+        '200':
+          description: Report
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Report' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/{report_id}/export:
+    get:
+      tags: [journalist]
+      summary: Export a report with citations (journalist plan)
+      parameters:
+        - { $ref: '#/components/parameters/ReportId' }
+        - { name: format, in: query, required: true, schema: { type: string, enum: [md, json, csl] } }
+      responses:
+        '200':
+          description: Export file
+          content:
+            text/markdown: { schema: { type: string } }
+            application/json: { schema: { type: object } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/claims/{claim_id}:
+    get:
+      tags: [claims]
+      summary: Claim with current rating, evidence and existing fact-checks
+      security: []
+      parameters: [ { $ref: '#/components/parameters/ClaimId' } ]
+      responses:
+        '200':
+          description: Claim
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ClaimDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/claims/{claim_id}/history:
+    get:
+      tags: [claims]
+      summary: All rating versions of a claim (immutable history)
+      security: []
+      parameters: [ { $ref: '#/components/parameters/ClaimId' } ]
+      responses:
+        '200':
+          description: Rating versions, newest first
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Rating' } }
+  /api/v1/sources:
+    get:
+      tags: [sources]
+      summary: Source registry (tiers are public)
+      security: []
+      parameters:
+        - { name: tier, in: query, schema: { $ref: '#/components/schemas/Tier' } }
+        - { name: q, in: query, schema: { type: string } }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: Sources
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Source' } }
+  /api/v1/sources/{source_id}:
+    get:
+      tags: [sources]
+      summary: Source profile with tier rationale and tier history
+      security: []
+      parameters: [ { name: source_id, in: path, required: true, schema: { type: string, format: uuid } } ]
+      responses:
+        '200':
+          description: Source
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Source' }
+  /api/v1/methodology:
+    get:
+      tags: [trust]
+      summary: Published rating scale, tier criteria, ClaimReview mapping and pipeline version
+      security: []
+      responses:
+        '200':
+          description: Methodology
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Methodology' }
+  /api/v1/submissions:
+    post:
+      tags: [trust]
+      summary: Correction, right of reply, takedown or tier appeal (public, rate limited, captcha)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmissionRequest' }
+      responses:
+        '202':
+          description: Accepted for review
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tracking_code, status]
+                properties:
+                  tracking_code: { type: string }
+                  status: { type: string, enum: [received] }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /api/v1/submissions/{tracking_code}:
+    get:
+      tags: [trust]
+      summary: Submission status by tracking code
+      security: []
+      parameters: [ { name: tracking_code, in: path, required: true, schema: { type: string } } ]
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [received, in_review, accepted, rejected, actioned] }
+                  decided_at: { type: [string, 'null'], format: date-time }
+  /api/v1/review/tasks:
+    get:
+      tags: [review]
+      summary: Review queue ordered by risk (reviewer role)
+      parameters:
+        - { name: kind, in: query, schema: { type: string, enum: [held_rating, submission, tier_change] } }
+        - { $ref: '#/components/parameters/Page' }
+      responses:
+        '200':
+          description: Tasks
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/ReviewTask' } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/review/tasks/{task_id}/decision:
+    post:
+      tags: [review]
+      summary: Approve, change or reject (writes a new Rating version and an audit event)
+      parameters: [ { name: task_id, in: path, required: true, schema: { type: string, format: uuid } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewDecision' }
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReviewTask' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Task already decided }
+  /api/v1/watches:
+    get:
+      tags: [journalist]
+      summary: List my watches
+      responses:
+        '200':
+          description: Watches
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Watch' } }
+    post:
+      tags: [journalist]
+      summary: Watch a topic or claim (journalist plan)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_type, target_id]
+              properties:
+                target_type: { type: string, enum: [topic, claim] }
+                target_id: { type: string, format: uuid }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Watch' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/watches/{watch_id}:
+    delete:
+      tags: [journalist]
+      summary: Remove a watch
+      parameters: [ { name: watch_id, in: path, required: true, schema: { type: string, format: uuid } } ]
+      responses:
+        '204': { description: Deleted }
+  /api/v1/alerts:
+    get:
+      tags: [journalist]
+      summary: My alerts, newest first
+      parameters: [ { name: unread, in: query, schema: { type: boolean } } ]
+      responses:
+        '200':
+          description: Alerts
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Alert' } }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    ReportId: { name: report_id, in: path, required: true, schema: { type: string, format: uuid } }
+    ClaimId: { name: claim_id, in: path, required: true, schema: { type: string, format: uuid } }
+    Page: { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+    PageSize: { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+  responses:
+    Unauthorized: { description: Missing or invalid token, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Forbidden: { description: Plan or role does not allow this, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound: { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    QuotaExceeded: { description: Plan quota exhausted, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    RateLimited: { description: Too many requests, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Refused: { description: Topic refused (private individual or minor), content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  schemas:
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail: { type: string }
+        code: { type: string }
+    Tier: { type: string, enum: [primary, established, state, independent, factchecker, social] }
+    RatingValue: { type: string, enum: [verified, mostly_true, mixed, unproven, misleading, false] }
+    Confidence: { type: string, enum: [high, medium, low] }
+    TopicType: { type: string, enum: [breaking, recent, historical] }
+    ReportRequest:
+      type: object
+      required: [topic]
+      properties:
+        topic: { type: string, minLength: 2, maxLength: 200 }
+        topic_choice_id: { type: [string, 'null'], description: candidate id chosen after a needs_choice event }
+        force_refresh: { type: boolean, default: false }
+    ReportSummary:
+      type: object
+      required: [id, topic_title, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        topic_title: { type: string }
+        topic_type: { $ref: '#/components/schemas/TopicType' }
+        status: { type: string, enum: [running, completed, partial, failed] }
+        claim_count: { type: integer }
+        created_at: { type: string, format: date-time }
+        fresh_until: { type: string, format: date-time }
+    Report:
+      allOf:
+        - $ref: '#/components/schemas/ReportSummary'
+        - type: object
+          required: [topic, timeline, perspectives, claims, sources, disclaimer, methodology_version]
+          properties:
+            topic: { $ref: '#/components/schemas/Topic' }
+            timeline: { type: array, items: { $ref: '#/components/schemas/TimelineEvent' } }
+            perspectives: { type: array, items: { $ref: '#/components/schemas/Perspective' } }
+            claims: { type: array, items: { $ref: '#/components/schemas/ClaimSummary' } }
+            sources: { type: array, items: { $ref: '#/components/schemas/SourceRef' } }
+            disclaimer: { type: string }
+            methodology_version: { type: string }
+            model_versions: { type: object, additionalProperties: { type: string } }
+            cost: { $ref: '#/components/schemas/Cost' }
+    Topic:
+      type: object
+      required: [title, type]
+      properties:
+        title: { type: string }
+        type: { $ref: '#/components/schemas/TopicType' }
+        span_start: { type: [string, 'null'], format: date }
+        span_end: { type: [string, 'null'], format: date }
+        entities:
+          type: array
+          items:
+            type: object
+            required: [name, kind]
+            properties:
+              name: { type: string }
+              kind: { type: string, enum: [person, organisation, place, event, other] }
+              living: { type: [boolean, 'null'] }
+        key_questions: { type: array, items: { type: string } }
+    TimelineEvent:
+      type: object
+      required: [date, label, source_count]
+      properties:
+        date: { type: string }
+        date_precision: { type: string, enum: [day, month, year] }
+        label: { type: string }
+        source_count: { type: integer }
+        article_ids: { type: array, items: { type: string, format: uuid } }
+    Perspective:
+      type: object
+      required: [id, kind, summary, holders, coverage_share]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [mainstream, other, also_circulating] }
+        key_question: { type: string }
+        stance: { type: string }
+        summary: { type: string, description: 'Sentences carry [e:<evidence_id>] markers' }
+        coverage_share: { type: number, minimum: 0, maximum: 1 }
+        evidence_support: { type: [number, 'null'], minimum: 0, maximum: 1 }
+        holders: { type: array, items: { $ref: '#/components/schemas/Holder' } }
+    Holder:
+      type: object
+      required: [role, url]
+      properties:
+        role: { type: string, enum: [outlet, person, institution, filing] }
+        name: { type: string }
+        source: { $ref: '#/components/schemas/SourceRef' }
+        url: { type: string, format: uri }
+        nofollow: { type: boolean }
+    ClaimSummary:
+      type: object
+      required: [id, text, checkable]
+      properties:
+        id: { type: string, format: uuid }
+        text: { type: string }
+        speaker: { type: string }
+        checkable: { type: boolean }
+        perspective_id: { type: [string, 'null'], format: uuid }
+        rating: { oneOf: [ { $ref: '#/components/schemas/Rating' }, { type: 'null' } ] }
+    ClaimDetail:
+      allOf:
+        - $ref: '#/components/schemas/ClaimSummary'
+        - type: object
+          required: [occurrences, factchecks, replies]
+          properties:
+            occurrences:
+              type: array
+              items:
+                type: object
+                required: [article_url, speaker]
+                properties:
+                  article_url: { type: string, format: uri }
+                  speaker: { type: string }
+                  quote: { type: string, maxLength: 300 }
+            factchecks: { type: array, items: { $ref: '#/components/schemas/ExistingFactCheck' } }
+            replies:
+              type: array
+              items:
+                type: object
+                required: [name, body, accepted_at]
+                properties:
+                  name: { type: string }
+                  body: { type: string }
+                  accepted_at: { type: string, format: date-time }
+    Rating:
+      type: object
+      required: [id, version, value, confidence, reason, basis, status, created_at, evidence]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer }
+        value: { $ref: '#/components/schemas/RatingValue' }
+        confidence: { $ref: '#/components/schemas/Confidence' }
+        reason: { type: string }
+        basis: { type: string, enum: [existing_factcheck, model, human] }
+        actor: { type: string }
+        status: { type: string, enum: [published, held_for_review, rejected, superseded] }
+        created_at: { type: string, format: date-time }
+        evidence: { type: array, items: { $ref: '#/components/schemas/Evidence' } }
+    Evidence:
+      type: object
+      required: [id, quote, stance, url, source, fetched_at]
+      properties:
+        id: { type: string, format: uuid }
+        quote: { type: string, maxLength: 300 }
+        stance: { type: string, enum: [supports, refutes, context] }
+        url: { type: string, format: uri }
+        archive_url: { type: [string, 'null'], format: uri }
+        source: { $ref: '#/components/schemas/SourceRef' }
+        published_at: { type: [string, 'null'], format: date-time }
+        fetched_at: { type: string, format: date-time }
+    ExistingFactCheck:
+      type: object
+      required: [publisher, url, textual_rating, mapped_rating]
+      properties:
+        publisher: { type: string }
+        url: { type: string, format: uri }
+        title: { type: string }
+        review_date: { type: [string, 'null'], format: date }
+        textual_rating: { type: string }
+        mapped_rating: { $ref: '#/components/schemas/RatingValue' }
+    SourceRef:
+      type: object
+      required: [id, name, tier]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        tier: { $ref: '#/components/schemas/Tier' }
+        state_media: { type: boolean }
+    Source:
+      allOf:
+        - $ref: '#/components/schemas/SourceRef'
+        - type: object
+          properties:
+            domain: { type: [string, 'null'] }
+            owner: { type: [string, 'null'] }
+            funding: { type: [string, 'null'] }
+            country: { type: [string, 'null'] }
+            language: { type: [string, 'null'] }
+            ifcn_signatory: { type: boolean }
+            rationale: { type: string }
+            tier_assigned_at: { type: string, format: date-time }
+            tier_history:
+              type: array
+              items:
+                type: object
+                properties:
+                  old_tier: { $ref: '#/components/schemas/Tier' }
+                  new_tier: { $ref: '#/components/schemas/Tier' }
+                  reason: { type: string }
+                  at: { type: string, format: date-time }
+    Methodology:
+      type: object
+      required: [version, ratings, tiers, claimreview_mapping]
+      properties:
+        version: { type: string }
+        ratings: { type: array, items: { type: object, properties: { value: { $ref: '#/components/schemas/RatingValue' }, definition: { type: string } } } }
+        tiers: { type: array, items: { type: object, properties: { tier: { $ref: '#/components/schemas/Tier' }, criteria: { type: string } } } }
+        claimreview_mapping: { type: object, additionalProperties: { $ref: '#/components/schemas/RatingValue' } }
+    SubmissionRequest:
+      type: object
+      required: [kind, target_type, target_id, email, body]
+      properties:
+        kind: { type: string, enum: [correction, reply, takedown, tier_appeal] }
+        target_type: { type: string, enum: [report, claim, evidence, source] }
+        target_id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+        is_named_party: { type: boolean, default: false }
+        body: { type: string, maxLength: 5000 }
+        captcha_token: { type: string }
+    ReviewTask:
+      type: object
+      required: [id, kind, target_type, target_id, risk_score, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [held_rating, submission, tier_change] }
+        target_type: { type: string }
+        target_id: { type: string, format: uuid }
+        risk_score: { type: integer }
+        decision: { type: [string, 'null'], enum: [approve, change, reject, null] }
+        note: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+    ReviewDecision:
+      type: object
+      required: [decision, note]
+      properties:
+        decision: { type: string, enum: [approve, change, reject] }
+        note: { type: string, minLength: 3 }
+        new_value: { $ref: '#/components/schemas/RatingValue' }
+        new_confidence: { $ref: '#/components/schemas/Confidence' }
+        new_reason: { type: string }
+    Watch:
+      type: object
+      required: [id, target_type, target_id, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        target_type: { type: string, enum: [topic, claim] }
+        target_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+    Alert:
+      type: object
+      required: [id, kind, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [new_coverage, new_factcheck, rating_changed] }
+        watch_id: { type: string, format: uuid }
+        report_id: { type: [string, 'null'], format: uuid }
+        claim_id: { type: [string, 'null'], format: uuid }
+        read_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+    Cost:
+      type: object
+      properties:
+        tokens_in: { type: integer }
+        tokens_out: { type: integer }
+        llm_cost_usd: { type: number }
+        search_cost_usd: { type: number }
+        cache_hit: { type: boolean }
