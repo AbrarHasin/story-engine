@@ -8,7 +8,7 @@ Multi-agent AI story generation platform. Topic → LangGraph pipeline → SSE-s
 Frontend (React+Vite :5173)
   → Backend (FastAPI :8080)
     → LangGraph StateGraph
-      → Supervisor (Haiku, cheap)
+      → START picks sections from include_* flags (plain Python, no LLM call)
         → [Research, LightSide, DarkSide, Facts] (Haiku, parallel)
         → Writer (Haiku 5.5)
         → Synthesizer / critic editor (Haiku 5.5)

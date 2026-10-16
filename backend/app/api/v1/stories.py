@@ -88,7 +88,6 @@ async def _stream_generation(
         "fact_bullets":       [],
         "story_draft":        None,
         "final_output":       None,
-        "route":              None,
         "errors":             [],
         "token_usage":        [],
         "run_id":             run_id,
@@ -247,10 +246,15 @@ async def generate_story(
     - `done` — generation complete, includes token usage and Langfuse trace URL
     - `error` — unrecoverable error
 
-    **Consume in JS:**
+    **Consume in JS** (EventSource cannot POST; read the body stream with fetch,
+    as `frontend/src/hooks/useGenerate.ts` does):
     ```js
-    const es = new EventSource('/api/v1/stories/generate', { method: 'POST' });
-    es.addEventListener('node_complete', e => console.log(JSON.parse(e.data)));
+    const res = await fetch('/api/v1/stories/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ topic }),
+    });
+    const reader = res.body.getReader();  // parse `event:` / `data:` lines
     ```
     """
     await enforce_rate_limit(user.id)

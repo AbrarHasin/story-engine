@@ -15,7 +15,6 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime
 from typing import Any, AsyncGenerator, Callable
 
 from sqlalchemy import select, update
@@ -23,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.models.db import Story, StoryStatus
+from app.models.db import Story, StoryStatus, utcnow
 from app.models.schemas import StoryGenerateRequest
 
 logger = logging.getLogger(__name__)
@@ -118,7 +117,7 @@ async def _replay(
             story.tokens_input = 0
             story.tokens_output = 0
             story.cost_usd = 0.0
-            story.completed_at = datetime.utcnow()
+            story.completed_at = utcnow()
             await db.commit()
 
     yield _sse("start", {

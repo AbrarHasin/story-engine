@@ -8,7 +8,6 @@ import hmac
 import uuid
 import aiohttp
 import logging
-from datetime import datetime
 from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -18,7 +17,7 @@ from sqlalchemy import select
 from app.core.auth import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.db import Payment, PaymentStatus, PlanTier, User
+from app.models.db import Payment, PaymentStatus, PlanTier, User, utcnow
 from app.models.schemas import PaymentInitiateRequest, PaymentInitiateResponse, PLAN_PRICES_BDT
 
 router = APIRouter(prefix="/payment", tags=["Payment"])
@@ -196,7 +195,7 @@ async def payment_ipn(request: Request, db: AsyncSession = Depends(get_db)):
         payment.status       = PaymentStatus.confirmed
         payment.val_id       = str(val_id)
         payment.ipn_payload  = data
-        payment.confirmed_at = datetime.utcnow()
+        payment.confirmed_at = utcnow()
 
         user = await db.get(User, payment.user_id)
         if user:
