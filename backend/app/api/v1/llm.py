@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import HumanMessage
 
 from app.core.auth import get_current_user
+from app.core.config import settings
 from app.llm import get_adapter
 
 router = APIRouter(prefix="/llm", tags=["LLM"])
@@ -27,7 +28,7 @@ async def llm_ping():
     on the Claude provider.
     """
     adapter = get_adapter()
-    llm = adapter.chat("router", max_tokens=20, temperature=0.0)
+    llm = adapter.chat("router", max_tokens=settings.MAX_TOKENS_PING, temperature=0.0)
     try:
         async with asyncio.timeout(300):
             resp = await llm.ainvoke([HumanMessage(content="Reply with the single word: pong")])

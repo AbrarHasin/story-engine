@@ -127,7 +127,7 @@ export default function SettingsPage() {
         <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-3">
           Architecture
         </h2>
-        <div className="card bg-slate-800/50 text-sm text-slate-400 font-mono leading-relaxed whitespace-pre">{`Supervisor (Haiku)
+        <div className="card bg-slate-800/50 text-sm text-slate-400 font-mono leading-relaxed whitespace-pre">{`Start (sections from include_* flags, no LLM call)
   |  fan-out
   +-- Research      (Haiku)
   +-- Light Side    (Haiku)
@@ -135,9 +135,9 @@ export default function SettingsPage() {
   +-- Facts         (Haiku)
   +-- Personality   (pass-through)
   |  fan-in
-Writer (Sonnet)
+Writer (Haiku)
   |
-Synthesizer (Sonnet)
+Critic editor (Haiku)
   |
 SSE Stream -> Frontend`}</div>
       </section>

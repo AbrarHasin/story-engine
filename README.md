@@ -15,14 +15,14 @@ for minimal token spend.
 |---|---|
 | Orchestration | LangGraph + LangChain |
 | Backend API | FastAPI (Python, async) |
-| Model Gateway | LiteLLM proxy |
+| Model access | `app/llm` adapter: Anthropic SDK direct, or a local OpenAI-compatible model (no proxy) |
 | Frontend | React + Vite + TypeScript + Tailwind |
 | Database | PostgreSQL + pgvector |
 | Cache / State | Redis |
 | Payment | SSLCommerz (Bangladesh) |
-| Auth | Auth0 / Cognito |
+| Auth | Built-in JWT (SPA login) |
 | Deployment | Docker → Cloudflare Tunnel → storyteller.techvigilant.com |
-| Observability | LangSmith |
+| Observability | Langfuse (self-hosted) |
 
 ## Project Structure
 
@@ -30,7 +30,7 @@ for minimal token spend.
 story-engine/
 ├── backend/           FastAPI + LangGraph orchestration
 │   └── app/
-│       ├── agents/    Supervisor, Research, Light, Dark, Facts, Writer, Synthesizer
+│       ├── agents/    Research, Light, Dark, Facts, Writer, Synthesizer (no supervisor)
 │       ├── api/       REST + SSE endpoints
 │       ├── models/    Pydantic schemas + DB models
 │       ├── payment/   SSLCommerz integration

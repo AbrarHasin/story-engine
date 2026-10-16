@@ -2,8 +2,8 @@
 Story Engine — FastAPI application entry point.
 
 Every endpoint is browsable and testable at:
-  http://localhost:8000/docs   (Swagger UI)
-  http://localhost:8000/redoc  (ReDoc)
+  http://localhost:8080/docs   (Swagger UI)
+  http://localhost:8080/redoc  (ReDoc)
 """
 import asyncio
 import logging

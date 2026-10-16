@@ -37,9 +37,8 @@ class StoryState(TypedDict):
     story_draft:    Optional[str]
     final_output:   Optional[str]
 
-    # ── Routing / control ────────────────────────────────────────────────────
-    route:          Optional[str]       # set by Supervisor: "full" | "quick"
-    errors:         Annotated[list[str], operator.add]
+    # ── Control ──────────────────────────────────────────────────────────────
+    errors:        Annotated[list[str], operator.add]
 
     # ── Observability ────────────────────────────────────────────────────────
     token_usage:    Annotated[list[TokenUsage], operator.add]

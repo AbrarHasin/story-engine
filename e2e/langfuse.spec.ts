@@ -189,7 +189,7 @@ test('story generation creates langfuse trace', async ({ page, request }) => {
     await page.screenshot({ path: 'e2e/screenshots/lf-07-trace-detail.png' });
 
     // Should see span nodes
-    const spans = ['supervisor', 'research', 'writer', 'synthesizer'];
+    const spans = ['research', 'writer', 'synthesizer'];
     for (const span of spans) {
       const el = page.getByText(span, { exact: false }).first();
       if (await el.isVisible({ timeout: 2000 })) {
