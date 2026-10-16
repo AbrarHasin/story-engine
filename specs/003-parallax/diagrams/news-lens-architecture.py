@@ -1,6 +1,6 @@
 """Generates News-Lens-Architecture.excalidraw (diagram-as-code).
 
-News Lens (working name), spec 003-news-lens: topic -> sourced report with the
+Parallax (working name), spec 003-parallax: topic -> sourced report with the
 mainstream account, the other sides and a rating per claim. Planning only;
 nothing is built. Local Docker first, AWS Option S (Lambda + Aurora + Bedrock,
 spec 002) later. Story Engine is the pilot whose platform code is reused.
@@ -10,7 +10,7 @@ Visual language copied from Story-Engine/Diagrams/aws-cloud-architecture.py
 numbered step badges keyed to "How it works", solid = request/data path,
 dashed = background / later / option, amber "!" = not built or not decided.
 
-Usage:  cd Projects/News-Lens/Diagrams && python3 -B news-lens-architecture.py
+Usage:  cd Projects/Parallax/Diagrams && python3 -B parallax-architecture.py
 """
 
 from __future__ import annotations
@@ -140,7 +140,7 @@ STEPS = [
 
 def build():
     e = []
-    e += txt("title", 28, 18, "News Lens (working name) - architecture, spec 003-news-lens", 22, SQUID)
+    e += txt("title", 28, 18, "Parallax (working name) - architecture, spec 003-parallax", 22, SQUID)
     e += txt("sub", 28, 50,
              "Topic in -> mainstream account, other sides, and a rated, cited verdict per claim. "
              "Planning only: nothing built. Local Docker first; AWS Option S + Bedrock later (spec 002).",
@@ -156,7 +156,7 @@ def build():
     # ---- system boundary ----------------------------------------------
     SX, SY, SW, SH = 270, 90, 1290, 820
     e += group("sys", SX, SY, SW, SH,
-               "News Lens stack (local: docker compose  |  later: AWS Option S Lambda + Aurora + S3)", SQUID,
+               "Parallax stack (local: docker compose  |  later: AWS Option S Lambda + Aurora + S3)", SQUID,
                fill="#FCFCFD")
 
     # edge row
@@ -302,7 +302,7 @@ def build():
         "LLM per cold report (modelled): ~$0.006 all Haiku 5.5; ~$0.021 with 3 Sonnet 5.5 verifications;",
         "  $0 on a cache hit; ~32k input / 5.5k output tokens. Search APIs $0 in MVP (free sources only).",
         "Effort: P0 foundations 5 pd + P1 MVP 34 pd = 39 pd; P2 trust ops 13, P3 production 8, P4 scale 16.",
-        "Repo: new 'news-lens' seeded from Story Engine platform code (ADR-001), own constitution.",
+        "Repo: new 'parallax' seeded from Story Engine platform code (ADR-001), own constitution.",
         "! Not measured: rating accuracy, latency, real cost. Gold set (300 claims) + red team first.",
         "! Human: name, media-law review, reviewers, paid API budget, ADR-001, plan pricing.",
         "! Legal: living-person allegations held for review; snippets only; takedown + reply flows.",
@@ -312,7 +312,7 @@ def build():
         e += txt(f"co{i}", RX + 16, HY + 310 + i * 26, ln, 11, col, w=720)
 
     e += txt("foot", 28, HY + 540,
-             "Generated 2026-10-16 from Projects/News-Lens/Diagrams/news-lens-architecture.py "
+             "Generated 2026-10-16 from Projects/Parallax/Diagrams/parallax-architecture.py "
              "(pattern: Story-Engine aws-cloud-architecture.py). Do not hand-edit the .excalidraw.",
              11, SLATE)
     return e
@@ -320,7 +320,7 @@ def build():
 
 def main():
     scene = {"type": "excalidraw", "version": 2,
-             "source": "Projects/News-Lens/Diagrams/news-lens-architecture.py",
+             "source": "Projects/Parallax/Diagrams/parallax-architecture.py",
              "elements": build(),
              "appState": {"gridSize": None, "viewBackgroundColor": "#FAFAFA"}, "files": {}}
     OUT.write_text(json.dumps(scene, indent=2) + "\n", encoding="utf-8")

@@ -1,6 +1,6 @@
-# Data Model: News Lens (003)
+# Data Model: Parallax (003)
 
-PostgreSQL 16 + pgvector. UUID primary keys, `timestamptz` everywhere (fixes the pilot's naive timestamps). Embeddings `vector(384)` (MiniLM-L6, as the pilot). Reused unchanged from the pilot: `users`, `payments`, quota columns (`plan`, `stories_this_month` renamed `reports_this_period`, `quota_period_start`), `rate_limit_window`. New column `users.role` (`reader` | `journalist` | `reviewer` | `admin`).
+PostgreSQL 16 + pgvector. UUID primary keys, `timestamptz` everywhere (fixes the pilot's naive timestamps). Embeddings `vector(384)` (MiniLM-L6, as the pilot). Reused unchanged from the pilot: `users`, `payments`, quota columns (`plan`, `stories_this_month` renamed `reports_this_period`, `quota_period_start`), `rate_limit_window`. New column `users.role` (`reader` | `journalist` | `admin`).
 
 ## Entity relationships
 
@@ -13,7 +13,7 @@ Claim *-* Report           (report_claims, with order, perspective_id)
 Claim 1-* ClaimOccurrence  ClaimOccurrence *-1 Article
 Claim 1-* Rating           Rating *-* Evidence         (rating_evidence)
 Evidence *-1 Article       Claim *-* ExistingFactCheck (claim_factchecks, with similarity)
-Claim/Report 1-* Submission  Submission 1-1 ReviewTask   Rating 0-1 ReviewTask (holds)
+Claim/Report 1-* Submission  (P2; no review tasks)
 User 1-* Watch 1-* Alert   AuditEvent (append-only, references any entity by type + id)
 ```
 
@@ -53,8 +53,7 @@ Tier changes write `source_tier_changes(id, source_id, old_tier, new_tier, reaso
 | published_at, fetched_at | timestamptz | |
 | http_status | int | of the fetch that produced `content_hash` |
 | content_hash | char(64) null | SHA-256 of normalised text |
-| text_blob_key | text null | blob store key; null after retention expiry |
-| text_expires_at | timestamptz null | fetched_at + 90 d |
+| text_cache_key | text null | transient Redis key, TTL 24 h; full text is never persisted (FR-034) |
 | extraction_basis | enum `fulltext_allowed, metadata_only, api_terms, open_licence` | FR-007, R5 |
 | archive_url | text null | Wayback copy |
 | language | text | |
@@ -106,7 +105,7 @@ Indexes: `canonical_url` unique, `published_at`, HNSW on `embedding`, GIN `to_ts
 | embedding | vector(384) | verdict cache key |
 | current_rating_id | uuid null | latest published Rating |
 | reverify_at | timestamptz | FR-031 |
-| hidden | bool | rejected or taken down |
+| hidden | bool | taken down (operator action, P2) |
 
 `claim_occurrences(id, claim_id, article_id, speaker, quote, char_start, char_end)`.
 
@@ -114,11 +113,11 @@ Indexes: `canonical_url` unique, `published_at`, HNSW on `embedding`, GIN `to_ts
 `existing_factchecks(id, publisher_name, publisher_site, url unique, title, claim_text, claimant, claim_date, review_date, textual_rating, language, mapped_rating, fetched_at)`; `claim_factchecks(claim_id, factcheck_id, similarity)`.
 
 ### evidence
-`id, article_id, quote text (<= 300 chars displayed; full passage kept internal), char_start, char_end, stance (supports | refutes | context), quote_verified bool, verified_against_hash char(64), created_at`.
+`id, article_id, quote text (<= 300 chars; the stored excerpt, no full passage kept, FR-034), char_start, char_end, stance (supports | refutes | context), quote_verified bool, verified_against_hash char(64), created_at`.
 
 ### ratings (immutable content; never deleted)
 
-All content columns are write-once. Only `status` may change, and only through a DB trigger that allows `held_for_review -> published | rejected` and `published -> superseded` and writes an AuditEvent in the same transaction. A changed value, confidence, reason or evidence is always a new version.
+All content columns are write-once. Only `status` may change, and only through a DB trigger that allows `published -> superseded` and writes an AuditEvent in the same transaction. A changed value, confidence, reason or evidence is always a new version.
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid | |
@@ -127,37 +126,37 @@ All content columns are write-once. Only `status` may change, and only through a
 | value | enum `verified, mostly_true, mixed, unproven, misleading, false` | |
 | confidence | enum `high, medium, low` | |
 | reason | text | 2-3 sentences |
-| basis | enum `existing_factcheck, model, human` | |
-| actor | text | `model:claude-haiku-5-5@prompt:<hash>` or `human:<user_id>` |
-| status | enum `published, held_for_review, rejected, superseded` | |
+| basis | enum `existing_factcheck, model` | |
+| actor | text | `model:claude-haiku-5-5@prompt:<hash>` or `system:reverify` |
+| status | enum `published, superseded` | shown with the "not reviewed" label (FR-025) |
 | validator_report | jsonb | citation, quote, independence checks |
 | created_at | timestamptz | |
 
 `rating_evidence(rating_id, evidence_id, order)`.
 
-### submissions / review_tasks
-`submissions(id, kind (correction | reply | takedown | tier_appeal), target_type, target_id, submitter_email, submitter_name, is_named_party bool, body, attachments jsonb, status (received | in_review | accepted | rejected | actioned), tracking_code, created_at)`.
-`review_tasks(id, kind (held_rating | submission | tier_change), target_type, target_id, risk_score int, assignee_id null, decision (approve | change | reject) null, note, decided_at, created_at)`.
+### submissions (P2)
+`submissions(id, kind (correction | reply | takedown | tier_appeal), target_type, target_id, submitter_email, submitter_name, is_named_party bool, body, attachments jsonb, status (received | accepted | rejected | actioned), tracking_code, created_at)`.
+No `review_tasks` table (human decision 2026-10-16). The operator actions submissions with an audited admin action.
 
 ### audit_events (append-only)
-`id bigserial, at timestamptz, actor, action (rating.created, rating.published, rating.held, review.decided, takedown.actioned, source.tier_changed, report.published, submission.received ...), target_type, target_id, payload jsonb, prev_hash char(64), hash char(64)`. `hash = sha256(prev_hash || canonical_json(row))`; a DB rule forbids UPDATE and DELETE; daily digest exported to the blob store. Retention >= 6 years.
+`id bigserial, at timestamptz, actor, action (rating.created, rating.published, rating.superseded, submission.actioned, takedown.actioned, source.tier_changed, report.published, submission.received ...), target_type, target_id, payload jsonb, prev_hash char(64), hash char(64)`. `hash = sha256(prev_hash || canonical_json(row))`; a DB rule forbids UPDATE and DELETE; daily digest exported to the blob store. Retention >= 6 years.
 
 ### watches / alerts
 `watches(id, user_id, target_type (topic | claim), target_id, created_at)`; `alerts(id, watch_id, kind (new_coverage | new_factcheck | rating_changed), payload, read_at null, created_at)`.
 
 ## State transitions
 
-- **Rating**: `held_for_review` -> `published` (approve) | `superseded` by a new human version (change) | `rejected` (claim hidden). `published` -> `superseded` on re-verification or human change. Status transitions go through the trigger above; any change of content inserts a new version and updates `claims.current_rating_id`.
+- **Rating**: created as `published` (no hold); `published` -> `superseded` on re-verification or a newly matched fact-check. Status transitions go through the trigger above; any change of content inserts a new version and updates `claims.current_rating_id`.
 - **Report**: `running` -> `completed` | `partial` (some connectors degraded) | `failed`.
-- **Submission**: `received` -> `in_review` -> `accepted` -> `actioned`, or `rejected`.
+- **Submission** (P2): `received` -> `accepted` -> `actioned`, or `rejected` (operator admin action, audited).
 
 ## Validation rules (enforced in code and tests)
 
 - A Rating with value `verified` or `false` needs >= 2 evidence rows from distinct `family_id`s, at least one from tier `primary | established | factchecker` (FR-020).
 - Every `rating_evidence` row needs `evidence.quote_verified = true` and `verified_against_hash = articles.content_hash` (FR-019).
-- `claims.living_person_named and allegation` with a model rating in (`verified, misleading, false`) -> `status = held_for_review` (FR-021).
+- `claims.living_person_named and allegation` -> claim text, reason and narrative use attributive wording; `verified` / `false` also need the FR-020 rule; no hold (FR-021).
 - Displayed quotes <= 300 chars, <= 3 per source per report (FR-024).
 
 ## Migration plan
 
-`0001_platform` (copied pilot tables, timestamptz, users.role), `0002_sources_feeds_articles`, `0003_topics_reports_clusters`, `0004_claims_ratings_evidence_factchecks`, `0005_trust_submissions_review_audit`, `0006_watches_alerts`. Seed: `import_directory.py` loads sources/feeds from the vault directory and the hive research JSON (235 feeds, tiers, state flags).
+`0001_platform` (copied pilot tables, timestamptz, users.role), `0002_sources_feeds_articles`, `0003_topics_reports_clusters`, `0004_claims_ratings_evidence_factchecks`, `0005_trust_submissions_audit`, `0006_watches_alerts`. Seed: `import_directory.py` loads sources/feeds from the vault directory and the hive research JSON (235 feeds, tiers, state flags).

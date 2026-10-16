@@ -1,4 +1,4 @@
-# Quickstart: News Lens (003), local Docker
+# Quickstart: Parallax (003), local Docker
 
 Target state after Phase 1 (MVP). Nothing here runs yet; this is the acceptance script the build must satisfy. It mirrors the pilot's local stack (Story Engine PR #18 `scripts/local-up.sh`).
 
@@ -8,7 +8,7 @@ Target state after Phase 1 (MVP). Nothing here runs yet; this is the acceptance 
 - `backend/.env` from `backend/.env.example`. Keys, all optional for a mocked run:
   - `LLM_PROVIDER=local` (zero cost, Docker Model Runner) or `anthropic` with `ANTHROPIC_API_KEY` (spend-capped, needs the human's go).
   - `FACTCHECK_TOOLS_API_KEY` (Google Cloud, free), `COURTLISTENER_TOKEN` (free account). Without them those connectors report `degraded` and the report still builds.
-  - `NEWS_LENS_USER_AGENT="NewsLensBot/0.1 (+https://<domain>/bot)"`.
+  - `PARALLAX_USER_AGENT="ParallaxBot/0.1 (+https://<domain>/bot)"`.
 - Never commit `backend/.env`.
 
 ## 2. Start
@@ -34,7 +34,7 @@ Expected (`report.spec.ts`, fixture topic "Michael Jackson allegations", mocked 
 
 1. Stream order: `start` -> `topic` (type `historical`, span 1993-) -> `stage` events -> `timeline` (>= 6 events incl. 1993, 2005, 2019) -> `perspective` x >= 2 -> `claim` x >= 3 -> `rating` per claim -> `section` -> `done`.
 2. Every `rating.evidence[].url` is in `report_articles` and every quote is found verbatim in the stored text (validator report all green).
-3. A living-person allegation claim arrives as `rating.status = held_for_review`; a review task exists.
+3. A living-person allegation claim arrives as `rating.status = published` with `assessment_label`, attributive reason wording and, for `verified` / `false`, two independent strong families.
 4. Repeat the same topic: `start.cache_hit = true`, `done.tokens.cost_usd = 0`.
 
 ## 4. Real-LLM smoke (only with the human's explicit spend approval)
@@ -53,7 +53,7 @@ backend/.venv/bin/python -m tests.eval.run --gold tests/eval/gold/claims.jsonl -
 backend/.venv/bin/python -m tests.eval.run --redteam tests/eval/redteam/topics.yaml --spend-cap 0.15
 ```
 
-Writes `tests/eval/out/<date>/metrics.json`: exact / within-one agreement, macro-F1, inversion rate, ECE, citation validity, unsupported-sentence rate, held-for-review recall, cost, latency. Gate for public launch: SC-002..SC-005.
+Writes `tests/eval/out/<date>/metrics.json`: exact / within-one agreement, macro-F1, inversion rate, ECE, citation validity, unsupported-sentence rate, living-person attribution compliance, cost, latency. Gate for public launch: SC-002..SC-005.
 
 ## 6. Stop
 

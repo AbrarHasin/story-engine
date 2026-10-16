@@ -1,4 +1,4 @@
-# Research: News Lens (003)
+# Research: Parallax (003)
 
 **Date**: 2026-10-16 | **Spec**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md)
 
@@ -11,19 +11,19 @@ Planning only. No LLM calls, no sign-ups, no API keys were used. Prices and limi
 | **Parallax** (recommended) | Seeing one object from several positions; the distance between views is information. | Strong metaphor for "mainstream vs other side, then measure". Common word: trademark and domain unchecked. |
 | **Clearsight** | Plain, reader-facing promise of clarity. | Generic; several companies use it. |
 | **OnRecord** | What is on the record vs what is said. | Fits journalists and court-record angle; `onrecord` domains likely taken. |
-| News Lens (working) | Lens on the news. | Descriptive; many "News Lens" products exist (e.g. The News Lens, Taiwan). Avoid for launch. |
+| News Lens (former working name) | Lens on the news. | Descriptive; many "News Lens" products exist (e.g. The News Lens, Taiwan). Avoid for launch. |
 
-No trademark or domain search was done (would need web lookups the human should run with a registrar).
+**Decision (human, 2026-10-16)**: **Parallax**. No trademark or domain search was done (would need web lookups the human should run with a registrar).
 
 ## R1. ADR-001: reuse the Story Engine repo or start a new one
 
-**Decision (recommended)**: **new repository `news-lens`**, created by copying the pilot's platform layer (`backend/app/core`, `llm`, `payment`, `cache`, `api/v1/auth.py`, alembic setup, Docker local stack, CI, `infra/` SAM skeleton from spec 002) at a tagged commit, with its own constitution v1. Extract a shared package only when a third product needs the same code (rule of three).
+**Decision (approved by the human 2026-10-16)**: **new repository `parallax`**, created by copying the pilot's platform layer (`backend/app/core`, `llm`, `payment`, `cache`, `api/v1/auth.py`, alembic setup, Docker local stack, CI, `infra/` SAM skeleton from spec 002) at a tagged commit, with its own constitution v1. Extract a shared package only when a third product needs the same code (rule of three).
 
 | Option | For | Against |
 |---|---|---|
-| A. Add News Lens inside `story-engine` (new graph + routes + pages) | Zero duplication; one CI; fastest first commit. | Story Engine is live; News Lens adds ingestion workers, legal audit data (6-year retention), many new tables and a different risk profile; the pilot constitution (3-5 bullet sub-agents, per-story cost) does not fit; one deploy breaks both. |
+| A. Add Parallax inside `story-engine` (new graph + routes + pages) | Zero duplication; one CI; fastest first commit. | Story Engine is live; Parallax adds ingestion workers, legal audit data (6-year retention), many new tables and a different risk profile; the pilot constitution (3-5 bullet sub-agents, per-story cost) does not fit; one deploy breaks both. |
 | **B. New repo seeded from the pilot (chosen)** | Clean domain, own constitution, own release cadence and data retention; pilot stays stable; the copied code is small (auth, quota, adapter, cache are a few hundred lines each). | Fixes to shared code must be ported by hand (mitigation: keep a `PLATFORM.md` list of copied files with source commit; port fixes in both). |
-| C. Monorepo with a shared `platform` package and two apps | No duplication long term. | Packaging and CI work up front (about 4-6 pd) for two products, before News Lens has proven itself. Revisit at Phase 4. |
+| C. Monorepo with a shared `platform` package and two apps | No duplication long term. | Packaging and CI work up front (about 4-6 pd) for two products, before Parallax has proven itself. Revisit at Phase 4. |
 
 Spec 003 stays in `story-engine/specs/` as the planning record; task T001 moves it into the new repo.
 
@@ -49,7 +49,7 @@ Spec 003 stays in `story-engine/specs/` as the planning record; task T001 moves 
 ### R2.2 Full-text extraction
 
 - **trafilatura** (Apache-2.0 since v1.8.0; earlier versions GPLv3+) for main-text, metadata, date extraction. GPL-3.0 compatible.
-- Fetch only when `robots.txt` allows our User-Agent (`NewsLensBot/0.1 (+https://<domain>/bot)`), honour `noarchive`/`nosnippet` meta and `X-Robots-Tag`, per-domain concurrency 1 and delay >= 2 s, cache by URL.
+- Fetch only when `robots.txt` allows our User-Agent (`ParallaxBot/0.1 (+https://<domain>/bot)`), honour `noarchive`/`nosnippet` meta and `X-Robots-Tag`, per-domain concurrency 1 and delay >= 2 s, cache by URL.
 - Paywalled or blocked: keep headline, RSS lede, link; mark `extraction_basis = metadata_only`.
 - Store `content_hash` (SHA-256 of normalised text) and `fetched_at` for every document: the anchor for quote validation (FR-019).
 
@@ -90,7 +90,7 @@ Worked example (Michael Jackson): resolver -> entities {Michael Jackson (decease
 2. **Existing fact-checks first**: `claims:search` with the claim text (and entity names); candidate reviews re-ranked by embedding similarity; accept >= 0.85 and same entities. Map `textualRating` (free text such as "False", "Pants on Fire", "Missing context", "Mostly True") to our scale via a published mapping table (`contracts/rating-scale.md`), Haiku only for unmapped strings (cap 50 tokens). A matched fact-check is evidence of tier `factchecker`, shown first.
 3. **Evidence retrieval** (no LLM): per claim, queries built from claim entities + key terms against the local index, Wikipedia, Wayback and the topic's fetched documents; passage split (about 120-word windows), rerank by embedding similarity; top 6 passages from at least 3 source families where available.
 4. **Verify** (Haiku default; Sonnet 5.5 for `living_person_named` allegations and claims where Haiku confidence is `low` and coverage is high, max 3 per report): input = claim + numbered passages as quoted data; output JSON `{rating, confidence, reason, evidence:[{passage_id, quote, stance}]}`; cap 300 tokens.
-5. **Validate** (code, no LLM): every `passage_id` exists; every `quote` is a verbatim substring of the stored text of that passage's document (after whitespace normalisation); FR-020 independence rule (distinct source families, at least one strong tier); FR-021 living-person hold. Fail -> one retry with the validator message -> `Unproven` ("insufficient verified evidence").
+5. **Validate** (code, no LLM): every `passage_id` exists; every `quote` is a verbatim substring of the fetched text (transient work cache, FR-034) of that passage's document (after whitespace normalisation); FR-020 independence rule (distinct source families, at least one strong tier); FR-021 living-person hold. Fail -> one retry with the validator message -> `Unproven` ("insufficient verified evidence").
 6. **Rating scale**:
 
 | Rating | Definition |
@@ -105,15 +105,15 @@ Worked example (Michael Jackson): resolver -> entities {Michael Jackson (decease
 
 Confidence: `high` (3+ independent strong families agree), `medium` (2), `low` (1 or conflicting); shown next to every rating.
 
-7. **Human review**: queue ordered by risk; reviewer can approve, change (new Rating version, actor `human:<id>`) or reject (claim hidden). Held claims show "pending review" to readers.
+7. **No human review (human decision 2026-10-16)**: there is no review queue. Every claim is shown with its rating, model confidence, reason and source links under the label "Automated assessment, not reviewed by a person". Safeguards in place of a hold: only fetched documents citable, verbatim quotes, FR-020 independence rule, attributive wording for allegations, corrections / right-of-reply contact link.
 
-## R5. Trust and legal (not legal advice; open question 2 asks for a media-law review)
+## R5. Trust and legal (not legal advice; media-law review deferred by the human 2026-10-16: the product is a review report)
 
-- **Defamation**: a site that writes and publishes its own (AI-generated) assessments is the speaker. US Section 230 protects hosting third-party content, not a platform's own content, and commentators expect AI output published under the site's name to be treated as its own speech; the law is unsettled (2025-2026 suits against AI companies). UK and EU law give fewer defences (UK Defamation Act 2013: truth, honest opinion, public interest). Controls: attribution language for allegations; ratings framed as assessments of published evidence with confidence; FR-020/021 thresholds and human hold for living persons; no rating of private individuals; corrections and replies (FR-023); audit log (FR-022); disclaimers (FR-025). Deceased subjects (Michael Jackson) cannot generally be defamed in the US or UK, but living accusers, family and estate can be affected: the living-party rule applies to them.
-- **Right of reply**: named parties submit a reply; accepted replies display beside the claim; the claim goes back to review.
-- **Copyright**: show headline, link, and short quotes (<= 300 characters, <= 3 per source per report) for commentary and verification; never full text; Wikipedia content attributed under CC BY-SA. Internal full-text storage for verification is a 90-day window pending legal advice (open question 7).
+- **Defamation**: a site that writes and publishes its own (AI-generated) assessments is the speaker. US Section 230 protects hosting third-party content, not a platform's own content, and commentators expect AI output published under the site's name to be treated as its own speech; the law is unsettled (2025-2026 suits against AI companies). UK and EU law give fewer defences (UK Defamation Act 2013: truth, honest opinion, public interest). Controls: attribution language for allegations; ratings framed as assessments of published evidence with confidence; FR-020/021 thresholds, attributive wording and the "not reviewed" label for living persons; no rating of private individuals; corrections and replies (FR-023); audit log (FR-022); disclaimers (FR-025). Deceased subjects (Michael Jackson) cannot generally be defamed in the US or UK, but living accusers, family and estate can be affected: the living-party rule applies to them.
+- **Right of reply**: named parties submit a reply; accepted replies display beside the claim; the claim is re-verified automatically.
+- **Copyright**: show headline, link, and short quotes (<= 300 characters, <= 3 per source per report) for commentary and verification; never full text; Wikipedia content attributed under CC BY-SA. Retention is quotes-only (human default 2026-10-16): excerpts, URL, metadata and content hash; full text only in a transient build cache (FR-034).
 - **Robots and terms**: honour robots.txt, meta robots and `X-Robots-Tag`; API terms per provider (NewsAPI Developer plan forbids production use; GNews free plan non-commercial; Guardian commercial use needs agreement). Store the `extraction_basis` per article.
-- **Takedown**: notice form (DMCA-style fields), acknowledgement, review, action (snippet hidden, link kept), counter-notice, all audited.
+- **Takedown**: notice form (DMCA-style fields), acknowledgement, operator action (snippet hidden, link kept), counter-notice, all audited.
 - **Audit log**: append-only table + daily hash chain (each day's digest includes the previous one) so tampering is detectable; 6-year retention (covers UK/US limitation windows for most claims; confirm with counsel).
 
 ## R6. Evaluation (no LLM calls during planning)
@@ -146,24 +146,24 @@ Prices per 1M tokens (vault `Projects/Story-Engine/Model-Cost-Analysis.md`, chec
 
 Other per-query costs: search APIs $0 in MVP (GDELT, Wikipedia, Wayback, Fact Check Tools, CourtListener free). With NewsAPI Business, $449/month fixed: $0.045 per report at 10k reports/month, $0.0018 per extra request beyond 250k. Embeddings and clustering run locally on CPU ($0).
 
-Hosting: local Docker $0. AWS Option S (spec 002) is about $12.60/month for the pilot, but News Lens ingestion every 30 min would keep Aurora Serverless v2 awake (no auto-pause at 0 ACU): about 0.5 ACU always on is roughly $45/month at about $0.12 per ACU-hour (us-east-1, verify). Options: batch ingestion every 2-4 h, buffer feeds in S3 and write in bursts, or accept the cost (decision for Phase 3).
+Hosting: local Docker $0. AWS Option S (spec 002) is about $12.60/month for the pilot, but Parallax ingestion every 30 min would keep Aurora Serverless v2 awake (no auto-pause at 0 ACU): about 0.5 ACU always on is roughly $45/month at about $0.12 per ACU-hour (us-east-1, verify). Options: batch ingestion every 2-4 h, buffer feeds in S3 and write in bursts, or accept the cost (decision for Phase 3).
 
 ## R8. Phases and effort (person-days, 1 developer + agents; +25 % contingency not included)
 
 | Phase | Scope | pd |
 |---|---|---|
 | P0 Foundations | New repo from pilot (ADR-001), constitution v1, CI, migrations for the data model, source registry import from the vault directory, connectors interface | 5 |
-| P1 MVP | Ingestion (2.5), on-demand connectors (3), extraction with robots policy (2), dedup/clustering/timeline (2.5), resolver + perspectives (2.5), claims + ClaimReview matching (3), verifier + validator + rules (4), graph + SSE + API + caches (3), report UI with claim drawer, source labels, methodology page (5), disclaimers + minimal review hold + audit log (2.5), evaluation harness + gold set + red team (4) | 34 |
-| P2 Trust ops and journalists | Corrections/reply/takedown (3), review workspace (3), export (1.5), watches + alerts (3), journalist plan + quotas (1), re-verification scheduler (1.5) | 13 |
-| P3 Production | AWS Option S reuse: ingestion on EventBridge Scheduler + Lambda, Aurora awake-cost decision, Bedrock adapter (shared with spec 002 T044), legal-review fixes | 8 |
+| P1 MVP | Ingestion (2.5), on-demand connectors (3), extraction with robots policy (2), dedup/clustering/timeline (2.5), resolver + perspectives (2.5), claims + ClaimReview matching (3), verifier + validator + rules (4), graph + SSE + API + caches (3), report UI with claim drawer, source labels, methodology page (5), disclaimers + assessment label + contact link + audit log (1.5), evaluation harness + gold set + red team (4) | 33 |
+| P2 Trust ops and journalists | Corrections/reply/takedown with operator admin action (3), export (1.5), watches + alerts (3), journalist plan + quotas (1), re-verification scheduler (1.5) | 10 |
+| P3 Production | AWS Option S reuse: ingestion on EventBridge Scheduler + Lambda, Aurora awake-cost decision, Bedrock adapter (shared with spec 002 T044); media-law review deferred | 7 |
 | P4 Scale | Multilingual evidence with translation (5), paid search APIs (2), social-claim tracking (4), embeddable widget / browser extension (5) | 16 |
-| **Total** | MVP = P0 + P1 = **39 pd** (about 49 with contingency) | **76** |
+| **Total** | MVP = P0 + P1 = **38 pd** (about 48 with contingency) | **71** |
 
 ## R9. Top risks
 
 | # | Risk | Impact | Mitigation |
 |---|---|---|---|
-| 1 | Wrong rating about a living person (defamation) | Legal claim, reputational damage | FR-020/021 thresholds, attribution language, human hold, replies, corrections, audit log, media-law review before public launch |
+| 1 | Wrong rating about a living person (defamation) | Legal claim, reputational damage | FR-020/021 thresholds, attribution language, "not reviewed" label, corrections / reply contact, audit log (media-law review deferred by the human) |
 | 2 | Hallucinated or misattributed citations | Trust collapse | Only fetched documents citable; verbatim quote validation; `Unproven` on failure; SC-002 gate in CI on fixtures |
 | 3 | False balance or amplifying misinformation; tier list seen as biased | Harm, credibility | Stance-based positions with standing/coverage gate, evidence-weighted layout, no-preview links, published tier criteria with audit and appeal |
 | 4 | Retrieval gaps (GDELT 3-month window, CourtListener 125/day, paywalls, bot blocks) make reports thin | Low quality, many `Unproven` | Mix of archive sources, caching, honest `Unproven`, Phase 4 paid APIs |
@@ -173,7 +173,7 @@ Also: copyright/ToS disputes (snippet policy, takedown), prompt injection in fet
 
 ## R10. Pipeline design decisions (summary for plan.md)
 
-- D1 New repo (ADR-001). D2 Free sources only in MVP. D3 Background RSS ingestion + on-demand search per query. D4 Haiku everywhere, Sonnet only for at most 3 high-risk claims per report. D5 Existing fact-checks before own verification. D6 Code-level citation validator, never trust model citations. D7 Two cache levels (report by topic, verdict by claim) with TTLs from FR-031. D8 SSE event contract extends the pilot's (`start`, `stage`, `node_complete` kept for compatibility, new `topic`, `timeline`, `perspective`, `claim`, `rating`, `done`, `error`). D9 Human hold for living-person allegations from day one.
+- D1 New repo (ADR-001). D2 Free sources only in MVP. D3 Background RSS ingestion + on-demand search per query. D4 Haiku everywhere, Sonnet only for at most 3 high-risk claims per report. D5 Existing fact-checks before own verification. D6 Code-level citation validator, never trust model citations. D7 Two cache levels (report by topic, verdict by claim) with TTLs from FR-031. D8 SSE event contract extends the pilot's (`start`, `stage`, `node_complete` kept for compatibility, new `topic`, `timeline`, `perspective`, `claim`, `rating`, `done`, `error`). D9 No human review queue (human decision 2026-10-16): automated-assessment label and automatic safeguards instead of a hold.
 
 ## Sources (fetched or searched 2026-10-16)
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://news-lens.local/contracts/sse-events.schema.json",
-  "title": "News Lens report SSE events",
+  "$id": "https://parallax.local/contracts/sse-events.schema.json",
+  "title": "Parallax report SSE events",
   "description": "Each SSE message is `event: <name>` + `data: <json>`. The `data` object MUST match the schema selected by `event`. Order: start, topic, then any of stage/timeline/perspective/claim/rating/section, then exactly one of done or error. Pilot event names start/node_complete/done/error are kept; node_complete is emitted alongside stage for pilot-compatible clients.",
   "type": "object",
   "required": ["event", "data"],
@@ -123,11 +123,12 @@
       "required": ["claim_id", "status"],
       "properties": {
         "claim_id": { "$ref": "#/$defs/uuid" },
-        "status": { "enum": ["published", "held_for_review", "not_checkable"] },
+        "status": { "enum": ["published", "not_checkable"] },
+        "assessment_label": { "const": "Automated assessment, not reviewed by a person" },
         "value": { "$ref": "#/$defs/ratingValue" },
         "confidence": { "enum": ["high", "medium", "low"] },
         "reason": { "type": "string" },
-        "basis": { "enum": ["existing_factcheck", "model", "human", "cache"] },
+        "basis": { "enum": ["existing_factcheck", "model", "cache"] },
         "evidence": {
           "type": "array",
           "maxItems": 5,
@@ -135,7 +136,7 @@
         }
       },
       "if": { "properties": { "status": { "const": "published" } } },
-      "then": { "required": ["claim_id", "status", "value", "confidence", "reason", "basis", "evidence"] }
+      "then": { "required": ["claim_id", "status", "value", "confidence", "reason", "basis", "evidence", "assessment_label"] }
     },
     "section": {
       "type": "object",
@@ -159,7 +160,6 @@
         "tokens": { "$ref": "#/$defs/tokens" },
         "search_cost_usd": { "type": "number" },
         "cache_hit": { "type": "boolean" },
-        "held_for_review": { "type": "integer" },
         "trace_url": { "type": ["string", "null"] }
       }
     },

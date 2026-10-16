@@ -1,4 +1,4 @@
-# Specification Quality Checklist: News Lens (003)
+# Specification Quality Checklist: Parallax (003)
 
 **Purpose**: Validate specification completeness and quality before planning
 **Created**: 2026-10-16
@@ -31,4 +31,4 @@
 
 ## Notes
 
-- Open questions 1-8 in spec.md need the human; none block Phase 0, questions 2 (legal review) and 3 (reviewers) block public launch.
+- The human answered the open questions on 2026-10-16 (name, ADR-001, no review queue, legal review deferred, free sources, no social claims, quotes-only retention); pricing and trademark checks remain and block nothing in Phase 0.

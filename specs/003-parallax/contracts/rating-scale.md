@@ -16,11 +16,11 @@ Served by `GET /api/v1/methodology`. Changing anything here bumps `methodology_v
 
 Confidence: `high` = 3+ independent strong families agree; `medium` = 2; `low` = 1 or conflicting.
 
-Living-person allegations: model ratings `verified`, `misleading`, `false` are held for human review (FR-021); wording stays attributive ("X alleged ...").
+Every rating is shown with the label "Automated assessment, not reviewed by a person" (FR-025). There is no human review hold. Living-person allegations: wording stays attributive ("X alleged ...") and `verified` / `false` need the minimum evidence above (FR-020, FR-021).
 
 ## ClaimReview `textualRating` mapping
 
-Matching is case-insensitive on the normalised string; unmatched strings go to a capped Haiku mapper whose output is stored and reviewed into this table.
+Matching is case-insensitive on the normalised string; unmatched strings go to a capped Haiku mapper whose output is stored and added to this table by a maintainer commit (bumps `methodology_version`).
 
 | Publisher wording (examples) | Mapped |
 |---|---|
@@ -33,4 +33,4 @@ Matching is case-insensitive on the normalised string; unmatched strings go to a
 | False, Incorrect, Fake, Fabricated, Pants on Fire, Hoax, Altered, Wrong | `false` |
 | Satire, Opinion, Labeled satire | tag `not_checkable` |
 
-The publisher's own wording and link are always shown next to the mapped value; News Lens never overwrites an existing fact-check, it only places it on this scale.
+The publisher's own wording and link are always shown next to the mapped value; Parallax never overwrites an existing fact-check, it only places it on this scale.

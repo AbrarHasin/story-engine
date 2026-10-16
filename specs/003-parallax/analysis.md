@@ -1,4 +1,4 @@
-# Specification Analysis Report: News Lens (003)
+# Specification Analysis Report: Parallax (003)
 
 **Date**: 2026-10-16 | **Artifacts**: spec.md, plan.md, research.md, data-model.md, contracts/, tasks.md, checklists/ | **Constitution**: Story Engine v1.0.0 (inherited; amendments in T002)
 
@@ -45,3 +45,16 @@ Run as `/speckit-analyze` (non-destructive), then findings were fixed in place. 
 1. Human answers open questions 1, 2, 5 (name, legal review, ADR-001) before T001.
 2. T002 constitution amendment before any code.
 3. Then `/speckit-implement` from Phase 1.
+
+## Re-run 2026-10-16 after the human decisions (Parallax)
+
+Applied: name Parallax (dir `specs/003-parallax`, moves to the new repo as `specs/001-parallax`), ADR-001 approved, no human review queue (FR-021 and FR-023 rewritten, FR-029 removed, review endpoints/schemas/`review_tasks`/`ReviewPage` removed, T048 and T056 repurposed/removed), media-law review deferred (T067, CHK011), quotes-only retention (new FR-034, T021, data model `text_cache_key`), `assessment_label` on every rating (openapi + SSE schema).
+
+| ID | Category | Severity | Location | Summary | Fix |
+|---|---|---|---|---|---|
+| B1 | Coverage | MEDIUM | FR-034 | New quotes-only rule needed a task and test. | T021 tests that no full text is written to the DB. FIXED |
+| B2 | Inconsistency | MEDIUM | FR-019 vs FR-034 | Verbatim check "against stored text" impossible without stored text. | Check runs during the build on the transient text; hash + excerpt kept as proof (FR-019, data model). FIXED |
+| B3 | Inconsistency | LOW | data model / openapi / SSE | `held_for_review`, `human` basis, review tasks still present. | Removed from all three; ratings are `published -> superseded` only. FIXED |
+| B4 | Stale artefact | INFO | diagrams/ | The architecture diagram still shows the reviewer and review hold. | Refresh in a later docs task. OPEN |
+
+Checks (script): 34 FR (FR-029 removed), 8 SC, all covered by tasks; 72 tasks, no duplicates; every task id in `checklists/trust-legal.md` exists; openapi refs resolve (13 paths); SSE schema valid against JSON Schema 2020-12. Effort now MVP 38 pd, total 71 pd.

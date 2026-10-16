@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: News Lens public API
+  title: Parallax public API
   version: 0.1.0-draft
   description: |
-    Planning contract for spec 003-news-lens. Auth, quotas and payments reuse the
+    Planning contract for spec 003-parallax. Auth, quotas and payments reuse the
     Story Engine pilot (`/api/v1/auth/*`, `/api/v1/payment/*`) and are not repeated here.
     Report generation streams Server-Sent Events over a POST response (fetch-based client);
     event payloads are defined in `sse-events.schema.json`.
@@ -19,7 +19,6 @@ tags:
   - name: claims
   - name: sources
   - name: trust
-  - name: review
   - name: journalist
 paths:
   /api/v1/reports:
@@ -171,7 +170,7 @@ paths:
             schema: { $ref: '#/components/schemas/SubmissionRequest' }
       responses:
         '202':
-          description: Accepted for review
+          description: Received and logged (a correction schedules re-verification)
           content:
             application/json:
               schema:
@@ -196,40 +195,8 @@ paths:
                 type: object
                 required: [status]
                 properties:
-                  status: { type: string, enum: [received, in_review, accepted, rejected, actioned] }
+                  status: { type: string, enum: [received, accepted, rejected, actioned] }
                   decided_at: { type: [string, 'null'], format: date-time }
-  /api/v1/review/tasks:
-    get:
-      tags: [review]
-      summary: Review queue ordered by risk (reviewer role)
-      parameters:
-        - { name: kind, in: query, schema: { type: string, enum: [held_rating, submission, tier_change] } }
-        - { $ref: '#/components/parameters/Page' }
-      responses:
-        '200':
-          description: Tasks
-          content:
-            application/json:
-              schema: { type: array, items: { $ref: '#/components/schemas/ReviewTask' } }
-        '403': { $ref: '#/components/responses/Forbidden' }
-  /api/v1/review/tasks/{task_id}/decision:
-    post:
-      tags: [review]
-      summary: Approve, change or reject (writes a new Rating version and an audit event)
-      parameters: [ { name: task_id, in: path, required: true, schema: { type: string, format: uuid } } ]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/ReviewDecision' }
-      responses:
-        '200':
-          description: Decision recorded
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ReviewTask' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { description: Task already decided }
   /api/v1/watches:
     get:
       tags: [journalist]
@@ -422,16 +389,17 @@ components:
                   accepted_at: { type: string, format: date-time }
     Rating:
       type: object
-      required: [id, version, value, confidence, reason, basis, status, created_at, evidence]
+      required: [id, version, value, confidence, reason, basis, status, assessment_label, created_at, evidence]
       properties:
         id: { type: string, format: uuid }
         version: { type: integer }
         value: { $ref: '#/components/schemas/RatingValue' }
         confidence: { $ref: '#/components/schemas/Confidence' }
         reason: { type: string }
-        basis: { type: string, enum: [existing_factcheck, model, human] }
+        basis: { type: string, enum: [existing_factcheck, model] }
         actor: { type: string }
-        status: { type: string, enum: [published, held_for_review, rejected, superseded] }
+        status: { type: string, enum: [published, superseded] }
+        assessment_label: { type: string, const: 'Automated assessment, not reviewed by a person' }
         created_at: { type: string, format: date-time }
         evidence: { type: array, items: { $ref: '#/components/schemas/Evidence' } }
     Evidence:
@@ -506,27 +474,6 @@ components:
         is_named_party: { type: boolean, default: false }
         body: { type: string, maxLength: 5000 }
         captcha_token: { type: string }
-    ReviewTask:
-      type: object
-      required: [id, kind, target_type, target_id, risk_score, created_at]
-      properties:
-        id: { type: string, format: uuid }
-        kind: { type: string, enum: [held_rating, submission, tier_change] }
-        target_type: { type: string }
-        target_id: { type: string, format: uuid }
-        risk_score: { type: integer }
-        decision: { type: [string, 'null'], enum: [approve, change, reject, null] }
-        note: { type: [string, 'null'] }
-        created_at: { type: string, format: date-time }
-    ReviewDecision:
-      type: object
-      required: [decision, note]
-      properties:
-        decision: { type: string, enum: [approve, change, reject] }
-        note: { type: string, minLength: 3 }
-        new_value: { $ref: '#/components/schemas/RatingValue' }
-        new_confidence: { $ref: '#/components/schemas/Confidence' }
-        new_reason: { type: string }
     Watch:
       type: object
       required: [id, target_type, target_id, created_at]

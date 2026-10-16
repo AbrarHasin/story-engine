@@ -1,12 +1,14 @@
-# Implementation Plan: News Lens (working name)
+# Implementation Plan: Parallax
 
-**Branch**: `news-lens-plan` (feature `003-news-lens`) | **Date**: 2026-10-16 | **Spec**: [spec.md](./spec.md)
+**Branch**: `news-lens-plan` (feature `003-parallax`) | **Date**: 2026-10-16 | **Spec**: [spec.md](./spec.md)
 
-**Input**: Feature specification from `/specs/003-news-lens/spec.md`; research in [research.md](./research.md); pilot `specs/001-story-engine-baseline`; deployment plan `specs/002-aws-deployment` (branch `aws-deployment-plan`, Option S serverless + Bedrock, deferred).
+**Input**: Feature specification from `/specs/003-parallax/spec.md`; research in [research.md](./research.md); pilot `specs/001-story-engine-baseline`; deployment plan `specs/002-aws-deployment` (branch `aws-deployment-plan`, Option S serverless + Bedrock, deferred).
 
 ## Summary
 
-A topic goes in; a sourced report streams out: topic card, event timeline, the mainstream account, the other positions with who holds them, and every key claim rated on a six-point scale with confidence, verbatim evidence quotes and links to documents the system actually fetched. A LangGraph pipeline (built on the pilot's adapter, SSE, cache, quota and auth code, in a new repository per ADR-001) resolves the topic, retrieves from a background RSS index plus free on-demand sources (GDELT, Wikipedia, Wayback, Google Fact Check Tools, CourtListener), clusters articles into events, classifies stances against source tiers, extracts claims, checks existing fact-checks first, verifies the rest with Haiku (Sonnet for at most 3 high-risk claims), and validates every citation in code before anything is shown. Living-person allegations are held for human review. Modelled LLM cost about $0.006 per cold report (all Haiku), about $0.021 with premium verification, $0 on a cache hit. MVP (P0 + P1) is about 39 person-days. Local Docker first; AWS Option S later.
+A topic goes in; a sourced report streams out: topic card, event timeline, the mainstream account, the other positions with who holds them, and every key claim rated on a six-point scale with confidence, verbatim evidence quotes and links to documents the system actually fetched. A LangGraph pipeline (built on the pilot's adapter, SSE, cache, quota and auth code, in a new repository per ADR-001) resolves the topic, retrieves from a background RSS index plus free on-demand sources (GDELT, Wikipedia, Wayback, Google Fact Check Tools, CourtListener), clusters articles into events, classifies stances against source tiers, extracts claims, checks existing fact-checks first, verifies the rest with Haiku (Sonnet for at most 3 high-risk claims), and validates every citation in code before anything is shown. There is no human review queue: every rating is shown with its model confidence, source links and an "Automated assessment, not reviewed by a person" label; living-person allegations get attributive wording and the strict independence rule. Modelled LLM cost about $0.006 per cold report (all Haiku), about $0.021 with premium verification, $0 on a cache hit. MVP (P0 + P1) is about 39 person-days. Local Docker first; AWS Option S later.
+
+**Human decisions (2026-10-16)**: (1) name **Parallax**; (2) ADR-001 approved, new repo `parallax` seeded from Story Engine; (3) **no human review queue**: every claim is shown with its rating, model confidence and source links under an "Automated assessment, not reviewed by a person" label, with the automatic safeguards kept (only fetched documents citable, verbatim quotes, FR-020 independence rule, attributive wording, corrections / right-of-reply contact link); (4) media-law review deferred (the product is a review report); `docs/legal/source-terms.md` stays because it governs what may be fetched. Defaults accepted: free sources only, no social-media claims in MVP, quotes-only retention (FR-034).
 
 ## Technical Context
 
@@ -14,7 +16,7 @@ A topic goes in; a sourced report streams out: topic card, event timeline, the m
 
 **Primary Dependencies**: FastAPI, LangGraph 1.x, SQLAlchemy async + Alembic, pgvector, fastembed/sentence-transformers MiniLM-L6 (384-d), trafilatura (Apache-2.0), feedparser (BSD), datasketch (MIT, MinHash), hdbscan or scikit-learn clustering (BSD), httpx, Langfuse v3 (local), pilot `app/llm/adapter.py` (anthropic | local | bedrock)
 
-**Storage**: PostgreSQL 16 + pgvector (articles, claims, ratings, audit); Redis (rate limits, per-domain fetch politeness, job queue in local mode); local disk / S3 (prod) for extracted text blobs with 90-day lifecycle
+**Storage**: PostgreSQL 16 + pgvector (articles, claims, ratings, audit); Redis (rate limits, per-domain fetch politeness, job queue in local mode); no full-text blob store (quotes-only retention, FR-034): full text lives in a transient Redis working cache (TTL 24 h) during a build
 
 **Testing**: pytest with mocked LLM and recorded HTTP fixtures (VCR-style cassettes) in CI; contract tests against `contracts/openapi.yaml` and `contracts/sse-events.schema.json`; Playwright e2e on the local stack; offline evaluation harness (gold set, red team) run manually with a spend cap
 
@@ -39,11 +41,11 @@ A topic goes in; a sourced report streams out: topic card, event timeline, the m
 | III Provider-agnostic | PASS | All LLM calls via `get_adapter().chat(role, ...)`; new roles `resolver`, `stance`, `extractor`, `verifier`, `verifier_premium`, `narrator`. Bedrock adapter shared with spec 002 T044. |
 | IV Observable | PASS (local) / AMEND (prod) | Langfuse trace per report locally; prod tracing decision inherits spec 002 D5 amendment. Add: audit log is NOT observability and is never sampled or disabled. |
 | V Streaming contract | PASS | New events defined in `contracts/sse-events.schema.json`; pilot events kept; e2e test per event (T046). |
-| VI Secure by default | PASS | Pilot JWT, prod fail-closed guard, ownership checks; new `reviewer` and `admin` roles; public submissions rate-limited and captcha'd; fetched text treated as untrusted data (prompt-injection controls). |
+| VI Secure by default | PASS | Pilot JWT, prod fail-closed guard, ownership checks; new `journalist` and `admin` roles; public submissions rate-limited and captcha'd; fetched text treated as untrusted data (prompt-injection controls). |
 | VII Test discipline | PASS | Mocked LLM + HTTP cassettes in CI; no live calls; evaluation is a separate manual, budgeted job. |
 | VIII Licensing | PASS | New deps Apache-2.0 / BSD / MIT (GPL-3.0 compatible); Wikipedia text CC BY-SA attributed; datasets licence-checked before use (R6). |
 | New principle IX (proposed) Evidence before assertion | ADD | No rating or factual sentence is published unless its citation validates against a stored fetched document; uncertainty defaults to `Unproven`. |
-| New principle X (proposed) Harm and fairness | ADD | Living-person rules, no private individuals or minors, right of reply, corrections, append-only audit, published methodology. |
+| New principle X (proposed) Harm and fairness | ADD | Living-person attribution rules, "automated assessment, not reviewed" label on every rating, no private individuals or minors, corrections / right-of-reply contact, append-only audit, published methodology. |
 
 Re-check after Phase 1 design: no violations; amendments listed are additive and land in T002 before code.
 
@@ -56,7 +58,7 @@ Re-check after Phase 1 design: no violations; amendments listed are additive and
   Reader/Journalist |  SPA (React/Vite)  |  fetch  |  API (FastAPI)               |
   ----------------> |  report, claim     | ------> |  auth/quota/billing (pilot)  |
                     |  drawer, sources,  |  SSE    |  reports, claims, sources,   |
-                    |  review, exports   | <------ |  submissions, review, watch  |
+                    |  exports, watches  | <------ |  submissions, watch          |
                     +--------------------+         +--------------+---------------+
                                                                   | invoke
                                          +------------------------v-----------------------+
@@ -69,13 +71,13 @@ Re-check after Phase 1 design: no violations; amendments listed are additive and
                                          +----+---------------+---------------+-----------+
                                               |               |               |
           +-----------------------+    +------v-----+  +------v------+  +-----v--------+
-  cron -> | Ingest worker (RSS)   | -> | Postgres + |  | Redis       |  | Text blobs   |
-          | ~235 feeds / 30 min   |    | pgvector   |  | rate limits |  | (disk / S3)  |
+  cron -> | Ingest worker (RSS)   | -> | Postgres + |  | Redis       |  | Work cache   |
+          | ~235 feeds / 30 min   |    | pgvector   |  | rate limits |  | (Redis, 24h) |
           +-----------------------+    +------------+  +-------------+  +--------------+
   external: RSS feeds, GDELT DOC, Wikipedia, Wayback, Fact Check Tools, CourtListener, LLM (Anthropic local / Bedrock prod)
 ```
 
-The vault diagram `Projects/News-Lens/Diagrams/News-Lens-Architecture.excalidraw` (+ `.png`) shows the same with a numbered flow.
+The vault diagram `Projects/Parallax/Diagrams/News-Lens-Architecture.excalidraw` (+ `.png`) shows the same with a numbered flow (drawn before the 2026-10-16 decisions: it still shows the review hold; refresh pending).
 
 ### LangGraph design (`app/agents/report_graph.py`)
 
@@ -85,16 +87,16 @@ The vault diagram `Projects/News-Lens/Diagrams/News-Lens-Architecture.excalidraw
 | 2 | `cache_lookup` | none | cached_report_id | Topic embedding cosine >= 0.92 and within freshness window -> replay (pilot `with_semantic_cache` pattern). |
 | 3a | `retrieve` | none | candidates[] | Parallel connectors by topic type (research R2.4); dedup by canonical URL. |
 | 3b | `seed_factchecks` | none | factchecks[] | `claims:search` on topic + entities (parallel with 3a). |
-| 4 | `extract_text` | none | documents[] | trafilatura with robots/terms policy; hash; blob store. |
+| 4 | `extract_text` | none | documents[] | trafilatura with robots/terms policy; hash; full text only in the transient work cache (FR-034). |
 | 5 | `cluster` | none | families[], clusters[], timeline[] | MinHash families, embedding clusters, dates. |
 | 6 | `stance` | Haiku `stance`, cap 1,000 | positions[] | Per source family x key question; gate FR-013. |
 | 7 | `extract_claims` | Haiku `extractor`, cap 1,200 | claims[] | Max 12; checkable flag; living-person flag. |
 | 8 | `match_factchecks` | Haiku only for unmapped verdict strings, cap 50 | claim.factcheck | Embedding match >= 0.85 + entity overlap. |
 | 9 | `gather_evidence` | none | passages[claim] | Local + Wikipedia + topic docs; rerank. |
 | 10 | `verify` (Send fan-out per claim) | Haiku `verifier` cap 300; Sonnet `verifier_premium` for <= 3 high-risk | ratings[] (`Annotated[list, operator.add]`) | Claim-verdict cache checked first (FR-031). |
-| 11 | `validate` | none | ratings (fixed), retries | Citation + quote + independence + living-person hold; one retry via conditional edge back to `verify` for failures, then `Unproven`. |
+| 11 | `validate` | none | ratings (fixed), retries | Citation + quote + independence + living-person attribution check; one retry via conditional edge back to `verify` for failures, then `Unproven`. |
 | 12 | `narrate` | Haiku `narrator`, cap 1,600 | sections | Mainstream + positions with `[e:<evidence_id>]` markers; sentences without a valid marker dropped by `validate_narrative` (code). |
-| 13 | `guard_publish` | none | report row, audit events | Disclaimers, snippet limits, nofollow flags, review tasks for held claims, audit events, cache write. |
+| 13 | `guard_publish` | none | report row, audit events | Disclaimers, snippet limits, nofollow flags, "not reviewed" label on every rating, corrections contact link, audit events, cache write. |
 
 State uses `Annotated[list, operator.add]` for fan-out writes; each node returns only its keys (constitution). Checkpointer: Redis as in the pilot (stateless fallback).
 
@@ -112,15 +114,15 @@ State uses `Annotated[list, operator.add]` for fan-out writes; each node returns
 | Claim verdict | claim embedding + entity set | cosine >= 0.90 and same entities | `reverify_at`: Unproven/Mixed 7 d, others 90 d, breaking 6 h |
 | Fact-check lookup | normalised query | exact | 24 h |
 | Connector HTTP | URL | exact, ETag aware | GDELT 15 min, Wikipedia 24 h, Wayback 30 d, CourtListener 30 d |
-| Extracted text | URL + hash | exact | 90 d then quotes-only |
+| Extracted text | URL + hash | exact | transient, at most 24 h (quotes-only retention) |
 
 ### Streaming UX
 
-Events (full schema in `contracts/sse-events.schema.json`): `start` -> `topic` (card or `needs_choice`) -> `stage` (retrieve, extract, cluster, stance, claims, verify, narrate; with counts and `degraded`) -> `timeline` -> `perspective` (one per position) -> `claim` (as extracted, rating pending) -> `rating` (per claim, may say `held_for_review`) -> `section` (narrative blocks) -> `done` (report id, cost, tokens, cache_hit, trace url) | `error`. The UI renders skeletons per section and fills them as events arrive; claims show "checking..." until their `rating` arrives.
+Events (full schema in `contracts/sse-events.schema.json`): `start` -> `topic` (card or `needs_choice`) -> `stage` (retrieve, extract, cluster, stance, claims, verify, narrate; with counts and `degraded`) -> `timeline` -> `perspective` (one per position) -> `claim` (as extracted, rating pending) -> `rating` (per claim, always with `assessment_label`) -> `section` (narrative blocks) -> `done` (report id, cost, tokens, cache_hit, trace url) | `error`. The UI renders skeletons per section and fills them as events arrive; claims show "checking..." until their `rating` arrives.
 
 ### Journalist features, auth, quotas, billing
 
-Reused pilot code: JWT login, `enforce_quota` / `enforce_rate_limit` / `record_completion`, plans free/pro/enterprise via SSLCommerz. Mapping: free = 10 reports/month, pro (journalist) = 300 + exports + watches + alerts, enterprise = reviewer seats. Exports: Markdown, JSON, citation list (CSL-JSON). Alerts: in-app in MVP-P2, email later.
+Reused pilot code: JWT login, `enforce_quota` / `enforce_rate_limit` / `record_completion`, plans free/pro/enterprise via SSLCommerz. Mapping: free = 10 reports/month, pro (journalist) = 300 + exports + watches + alerts, enterprise = team seats. Exports: Markdown, JSON, citation list (CSL-JSON). Alerts: in-app in MVP-P2, email later.
 
 ### Deployment
 
@@ -131,7 +133,7 @@ Local first: `docker compose` services `api`, `graph` (same image, `RUN_ROLE`), 
 ### Documentation (this feature)
 
 ```text
-specs/003-news-lens/
+specs/003-parallax/
 ├── spec.md
 ├── plan.md              # this file
 ├── research.md          # names, ADR-001, retrieval, perspectives, fact-check, legal, cost, eval, risks
@@ -148,7 +150,7 @@ specs/003-news-lens/
 └── tasks.md
 ```
 
-### Source Code (new repository `news-lens`, ADR-001)
+### Source Code (new repository `parallax`, ADR-001)
 
 ```text
 backend/
@@ -163,20 +165,20 @@ backend/
 │   ├── analysis/        # dedup.py (MinHash), cluster.py, timeline.py
 │   ├── agents/          # report_state.py, report_graph.py, nodes/{resolve,stance,claims,verify,narrate}.py,
 │   │                    # validate.py, guard.py, prompts/ (versioned)
-│   ├── trust/           # audit.py (hash chain), submissions.py, review.py, disclaimers.py
+│   ├── trust/           # audit.py (hash chain), submissions.py, disclaimers.py
 │   ├── watch/           # watches.py, alerts.py
-│   ├── api/v1/          # reports.py (SSE), claims.py, sources.py, submissions.py, review.py, watches.py,
+│   ├── api/v1/          # reports.py (SSE), claims.py, sources.py, submissions.py, watches.py,
 │   │                    # exports.py, methodology.py, auth.py (pilot)
 │   ├── workers/         # ingest.py, reverify.py, scheduler.py
 │   └── models/          # db.py, schemas.py
 ├── alembic/versions/
 └── tests/               # unit, contract, integration (cassettes), eval/ (offline harness, gold set)
 frontend/src/
-├── pages/               # SearchPage, ReportPage, ClaimPage, SourcePage, MethodologyPage, ReviewPage, WatchesPage, LoginPage
+├── pages/               # SearchPage, ReportPage, ClaimPage, SourcePage, MethodologyPage, WatchesPage, LoginPage
 ├── components/          # TopicCard, Timeline, PerspectiveCard, ClaimRow, RatingBadge, EvidenceQuote, TierChip
 ├── hooks/useReportStream.ts
 └── stores/reportStore.ts
-e2e/                     # Playwright: report.spec.ts, trust.spec.ts, review.spec.ts
+e2e/                     # Playwright: report.spec.ts, trust.spec.ts
 docker-compose.yml, scripts/local-up.sh, scripts/local-down.sh, infra/ (later, from spec 002)
 ```
 
@@ -186,6 +188,6 @@ docker-compose.yml, scripts/local-up.sh, scripts/local-down.sh, infra/ (later, f
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
-| Second Sonnet-tier role (`verifier_premium`) beyond the pilot's tiering | Defamation risk on living-person allegations warrants the stronger model for <= 3 claims/report | All-Haiku: cheaper but unmeasured on adversarial claims; a human hold alone delays every such report |
+| Second Sonnet-tier role (`verifier_premium`) beyond the pilot's tiering | Defamation risk on living-person allegations warrants the stronger model for <= 3 claims/report | All-Haiku: cheaper but unmeasured on adversarial claims; there is no human review, so the stronger model is the main extra safeguard |
 | Background workers (ingest, re-verify) beyond the pilot's single request path | Recent-news coverage and rating freshness need scheduled work | On-demand only: every query would hit 235 feeds and rate limits; stale ratings would never be refreshed |
 | New repository instead of a module in the pilot | Different risk, retention and release cadence; live pilot stays stable | Module in pilot (option A) couples deploys and constitutions; monorepo (option C) costs 4-6 pd up front |
