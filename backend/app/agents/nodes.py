@@ -57,6 +57,35 @@ def _json_loads(text: str) -> Any:
         raise
 
 
+_JSON_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
+
+
+def _bullet_list(text: str) -> list[str]:
+    """Parse a model's JSON array of strings into bullets.
+
+    A reply cut off at max_tokens is an unterminated array; keep its complete
+    items rather than showing the raw JSON. Non-JSON replies become one bullet per line.
+    """
+    try:
+        parsed = _json_loads(text)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, list):
+        return [str(b).strip() for b in parsed if str(b).strip()]
+    if isinstance(parsed, str) and parsed.strip():
+        return [parsed.strip()]
+
+    body = text.strip()
+    start = body.find("[")
+    if start != -1:
+        items = [json.loads(m.group(0)) for m in _JSON_STRING.finditer(body, start)]
+        items = [i.strip() for i in items if i.strip()]
+        if items:
+            return items
+    lines = [ln.strip().lstrip("-•*").strip() for ln in body.splitlines()]
+    return [ln for ln in lines if ln and ln not in ("[", "]", "```", "```json")]
+
+
 def _length_guide(length: str) -> str:
     return {"short": "1–2 sentences", "medium": "3–5 sentences", "long": "6–10 sentences"}.get(length, "3–5 sentences")
 
@@ -90,12 +119,7 @@ async def research_node(state: StoryState) -> dict:
         "Return JSON array only."
     )
     resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
-    try:
-        bullets = _json_loads(str(resp.content))
-        if not isinstance(bullets, list):
-            bullets = [str(bullets)]
-    except Exception:
-        bullets = [str(resp.content).strip()]
+    bullets = _bullet_list(str(resp.content))
 
     return {"research_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
@@ -117,10 +141,7 @@ async def light_side_node(state: StoryState) -> dict:
         "Return JSON array only."
     )
     resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
-    try:
-        bullets = _json_loads(str(resp.content))
-    except Exception:
-        bullets = [str(resp.content).strip()]
+    bullets = _bullet_list(str(resp.content))
 
     return {"light_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
@@ -142,10 +163,7 @@ async def dark_side_node(state: StoryState) -> dict:
         "Return JSON array only."
     )
     resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
-    try:
-        bullets = _json_loads(str(resp.content))
-    except Exception:
-        bullets = [str(resp.content).strip()]
+    bullets = _bullet_list(str(resp.content))
 
     return {"dark_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 
@@ -166,10 +184,7 @@ async def facts_node(state: StoryState) -> dict:
         "Return JSON array only."
     )
     resp = await llm.ainvoke([_system(system), HumanMessage(content=human)])
-    try:
-        bullets = _json_loads(str(resp.content))
-    except Exception:
-        bullets = [str(resp.content).strip()]
+    bullets = _bullet_list(str(resp.content))
 
     return {"fact_bullets": bullets, "token_usage": [_usage(resp, "router")]}
 

@@ -6,6 +6,7 @@ GET  /api/v1/stories/{id}       → fetch completed story
 GET  /api/v1/stories/           → list user's stories
 DELETE /api/v1/stories/{id}     → delete story
 """
+import asyncio
 import json
 import uuid
 import logging
@@ -99,7 +100,8 @@ async def _stream_generation(
 
     # Langfuse: real user id, and a trace id we also use to build the trace URL
     trace_id = run_id.replace("-", "")
-    cb = get_langfuse_callback(trace_name="story_generation", trace_id=trace_id)
+    # Off the event loop: the first call may probe Langfuse reachability over HTTP
+    cb = await asyncio.to_thread(get_langfuse_callback, "story_generation", trace_id)
     config = {
         "configurable": {"thread_id": str(story_id)},
         "callbacks": [cb] if cb else [],
@@ -113,7 +115,9 @@ async def _stream_generation(
     total_input = 0
     total_output = 0
     total_cost = 0.0
-    final_state = initial
+    # Node outputs merged as they stream: the fallback if the root end event is missed
+    streamed: dict = {}
+    final_state: dict | None = None
 
     try:
         # astream_events gives us per-node events
@@ -121,10 +125,18 @@ async def _stream_generation(
             kind = event.get("event")
             name = event.get("name", "")
 
-            if kind == "on_chain_end" and name in (
+            # The root run has no parents. Its name follows config["run_name"], so never match on it.
+            if kind == "on_chain_end" and not event.get("parent_ids"):
+                output = event.get("data", {}).get("output")
+                if isinstance(output, dict):
+                    final_state = output
+
+            elif kind == "on_chain_end" and name in (
                 "research", "light_side", "dark_side", "facts", "writer", "synthesizer"
             ):
                 output = event.get("data", {}).get("output", {})
+                if isinstance(output, dict):
+                    streamed.update({k: v for k, v in output.items() if k != "token_usage"})
                 # Emit node completion to client
                 payload: dict = {"node": name}
 
@@ -150,9 +162,6 @@ async def _stream_generation(
                 payload["tokens"] = {"input": total_input, "output": total_output, "cost_usd": round(total_cost, 6)}
                 yield _sse("node_complete", payload)
 
-            elif kind == "on_chain_end" and name == "LangGraph":
-                final_state = event.get("data", {}).get("output", {})
-
     except Exception as e:
         logger.exception("Graph execution error for story %s", story_id)
         code, message = classify_llm_error(e)
@@ -166,6 +175,10 @@ async def _stream_generation(
 
         yield _sse("error", {"code": code, "message": message, "story_id": str(story_id)})
         return
+
+    if final_state is None:
+        logger.warning("No root graph end event for story %s; persisting streamed node outputs", story_id)
+        final_state = {**initial, **streamed}
 
     # Authoritative totals: sum every node's usage from the final state
     final_usage = final_state.get("token_usage") or []

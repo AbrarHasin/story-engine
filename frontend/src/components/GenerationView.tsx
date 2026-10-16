@@ -2,6 +2,7 @@ import { ExternalLink, CheckCircle2, Loader2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { GenerationState, NodeName } from '@/stores/generationStore'
 import type { GenerateRequest } from '@/hooks/useGenerate'
+import { normalizeBullets } from '@/lib/bullets'
 
 interface Props {
   status: GenerationState['status']
@@ -102,7 +103,7 @@ export default function GenerationView({ status, genState, request }: Props) {
                 </div>
                 {done && result?.bullets ? (
                   <ul className="space-y-1.5">
-                    {result.bullets.map((b, i) => (
+                    {normalizeBullets(result.bullets).map((b, i) => (
                       <li key={i} className="text-sm text-slate-300 flex gap-2">
                         <span className={clsx('mt-1 shrink-0 w-1.5 h-1.5 rounded-full', color.replace('text-', 'bg-'))} />
                         {b}
@@ -131,7 +132,7 @@ export default function GenerationView({ status, genState, request }: Props) {
           </div>
           {nodeResults['research']?.bullets ? (
             <div className="flex flex-wrap gap-2">
-              {nodeResults['research'].bullets.map((b, i) => (
+              {normalizeBullets(nodeResults['research'].bullets).map((b, i) => (
                 <span key={i} className="token-badge text-slate-300">{b}</span>
               ))}
             </div>

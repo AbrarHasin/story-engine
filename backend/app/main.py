@@ -5,6 +5,7 @@ Every endpoint is browsable and testable at:
   http://localhost:8000/docs   (Swagger UI)
   http://localhost:8000/redoc  (ReDoc)
 """
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -14,7 +15,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.database import engine
-from app.core.observability import get_langfuse
+from app.core.observability import get_langfuse, langfuse_reachable
 from app.api.v1.auth          import router as auth_router
 from app.api.v1.stories      import router as stories_router
 from app.api.v1.personalities import router as personalities_router
@@ -112,6 +113,8 @@ async def health():
     lf = get_langfuse()
     if lf is None:
         checks["langfuse"] = "not configured"
+    elif not await asyncio.to_thread(langfuse_reachable):
+        checks["langfuse"] = "unreachable"
 
     return JSONResponse(checks, status_code=200 if checks["status"] == "ok" else 207)
 
