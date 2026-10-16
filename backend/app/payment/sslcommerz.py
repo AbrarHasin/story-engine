@@ -8,7 +8,9 @@ import hmac
 import uuid
 import aiohttp
 import logging
+from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -207,17 +209,31 @@ async def payment_ipn(request: Request, db: AsyncSession = Depends(get_db)):
 
     return {"status": "received"}
 
-@router.get("/success", summary="SSLCommerz success redirect")
-async def payment_success(tran_id: str):
-    return {"message": "Payment successful", "tran_id": tran_id,
-            "redirect": f"{settings.FRONTEND_URL}/billing/success?tran_id={tran_id}"}
+async def _return_to_frontend(request: Request, outcome: str) -> RedirectResponse:
+    """
+    Send the browser back to the SPA at /billing/{outcome}.
+    SSLCommerz POSTs a form to these URLs (GET is kept for manual testing).
+    Nothing is trusted or changed here: only the signed IPN upgrades a plan.
+    """
+    tran_id = request.query_params.get("tran_id")
+    if not tran_id and request.method == "POST":
+        tran_id = (await request.form()).get("tran_id")  # type: ignore[assignment]
+    url = f"{settings.FRONTEND_URL.rstrip('/')}/billing/{outcome}"
+    if isinstance(tran_id, str) and tran_id:
+        url += "?" + urlencode({"tran_id": tran_id})
+    return RedirectResponse(url, status_code=303)
 
 
-@router.get("/fail", summary="SSLCommerz fail redirect")
-async def payment_fail(tran_id: str):
-    return {"message": "Payment failed", "tran_id": tran_id}
+@router.api_route("/success", methods=["GET", "POST"], summary="SSLCommerz success redirect")
+async def payment_success(request: Request):
+    return await _return_to_frontend(request, "success")
 
 
-@router.get("/cancel", summary="SSLCommerz cancel redirect")
-async def payment_cancel(tran_id: str):
-    return {"message": "Payment cancelled", "tran_id": tran_id}
+@router.api_route("/fail", methods=["GET", "POST"], summary="SSLCommerz fail redirect")
+async def payment_fail(request: Request):
+    return await _return_to_frontend(request, "fail")
+
+
+@router.api_route("/cancel", methods=["GET", "POST"], summary="SSLCommerz cancel redirect")
+async def payment_cancel(request: Request):
+    return await _return_to_frontend(request, "cancel")

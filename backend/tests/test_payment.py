@@ -196,3 +196,40 @@ async def test_late_failed_ipn_cannot_overwrite_confirmed(anon, other_user, gate
     r = await anon.post("/api/v1/payment/ipn", data=data)
     assert r.status_code == 200
     assert (await _get(tran_id)).status == PaymentStatus.confirmed
+
+
+# ── browser return URLs → SPA /billing/{outcome} ────────────────────────────
+
+@pytest.fixture
+def frontend_url(monkeypatch):
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://app.example.test/")
+
+
+@pytest.mark.parametrize("outcome", ["success", "fail", "cancel"])
+async def test_gateway_form_post_redirects_to_spa(anon, frontend_url, outcome):
+    r = await anon.post(f"/api/v1/payment/{outcome}",
+                        data={"tran_id": "SE-ABC123", "status": "VALID"})
+    assert r.status_code == 303
+    assert r.headers["location"] == f"https://app.example.test/billing/{outcome}?tran_id=SE-ABC123"
+
+
+async def test_get_return_redirects_and_encodes_tran_id(anon, frontend_url):
+    r = await anon.get("/api/v1/payment/fail", params={"tran_id": "SE-1&x=<y>"})
+    assert r.status_code == 303
+    assert r.headers["location"] == "https://app.example.test/billing/fail?tran_id=SE-1%26x%3D%3Cy%3E"
+
+
+async def test_return_without_tran_id_still_redirects(anon, frontend_url):
+    r = await anon.post("/api/v1/payment/cancel", data={})
+    assert r.status_code == 303
+    assert r.headers["location"] == "https://app.example.test/billing/cancel"
+
+
+async def test_success_return_does_not_upgrade_plan(anon, other_user, frontend_url, gateway):
+    tran_id = await _make_payment(other_user)
+    r = await anon.post("/api/v1/payment/success",
+                        data={"tran_id": tran_id, "val_id": "v1", "status": "VALID"})
+    assert r.status_code == 303
+    assert gateway.validated == []
+    assert (await _get(tran_id)).status == PaymentStatus.initiated
+    assert await _plan(other_user) == PlanTier.free
