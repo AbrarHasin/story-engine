@@ -153,6 +153,32 @@ def test_graph_has_no_supervisor_node():
     assert "supervisor" not in build_graph().nodes
 
 
+# -- Bullet count (Spec Kit C7): at most 5 kept, short lists logged -----------
+
+def test_counted_caps_long_lists():
+    from app.agents.nodes import BULLETS_MAX, _counted
+    assert _counted([f"b{i}" for i in range(8)], "light_side") == [f"b{i}" for i in range(BULLETS_MAX)]
+
+
+def test_counted_keeps_and_logs_short_lists(caplog):
+    from app.agents.nodes import _counted
+    with caplog.at_level("WARNING", logger="app.agents.nodes"):
+        assert _counted(["only one"], "dark_side") == ["only one"]
+    assert "dark_side returned 1 bullets" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_facts_node_enforces_bullet_count():
+    from app.agents import nodes
+
+    resp = MagicMock(content='["a", "b", "c", "d", "e", "f", "g"]')
+    llm = MagicMock(ainvoke=AsyncMock(return_value=resp))
+    with patch.object(nodes, "_llm", return_value=llm), \
+         patch.object(nodes, "_usage", return_value={}):
+        out = await nodes.facts_node(_base_state())
+    assert out["fact_bullets"] == ["a", "b", "c", "d", "e"]
+
+
 # -- LLM resilience: timeout + bounded retry, clean error classification ------
 
 def test_anthropic_chat_has_timeout_and_bounded_retries():

@@ -121,7 +121,7 @@ Operators open per-story Langfuse traces and check dependency health.
 - **NFR-004 [GAP]**: Payment confirmation MUST be verified with the gateway (Principle VI). Not implemented.
 - **NFR-005 [GAP]**: Production MUST fail closed on the default JWT secret (Principle VI). Not implemented.
 - **NFR-006 [GAP]**: Discarded LLM calls MUST NOT ship (Principle I). The supervisor route is discarded.
-- **NFR-007 [GAP]**: Per-user quotas and rate limits MUST bound spend on the free plan (Hub: 5 stories/month).
+- **NFR-007**: Per-user quotas and rate limits MUST bound spend on the free plan: completed stories per calendar month per plan (`PLAN_LIMIT_FREE` 10, `PLAN_LIMIT_PRO` 200, enterprise unlimited) and at most `RATE_LIMIT_PER_MINUTE` (5) generate calls per user per minute. Built in PR #8.
 - **NFR-008 [GAP]**: Synthesizer output capacity MUST be at least the writer cap so the final story is never truncated (code: 500 vs 1500).
 - **NFR-009 [GAP]**: Production compose MUST NOT hard-code Langfuse keys or database passwords (Principle VI).
 - **FR-019 [GAP]**: The frontend MUST authenticate (login, bearer header) when `JWT_SECRET_KEY` is not the dev value.
@@ -133,11 +133,11 @@ Operators open per-story Langfuse traces and check dependency health.
 - **Personality**: user, name, voice, tone, reading_level, banned_words, locale, is_default.
 - **Story**: user, personality, inputs, section texts, status, tokens, cost, langgraph_run_id, embedding (unused).
 - **Payment**: user, tran_id, val_id, amount, plan, status, ipn_payload.
-- **StoryState**: LangGraph TypedDict (inputs, bullets lists with `operator.add`, draft, final, route, errors, token_usage, run_id).
+- **StoryState**: LangGraph TypedDict (inputs, bullets lists with `operator.add`, draft, final, errors, token_usage, run_id).
 
 ## Success Criteria
 
-- **SC-001**: Full E2E suite (Playwright, 38 tests in `e2e/`) passes against the running stack.
+- **SC-001**: Full E2E suite (Playwright, every spec in `e2e/`: 53 `test()` cases across 6 files on 2026-10-17) passes against the running stack.
 - **SC-002**: CI (lint, agent tests with mocked LLM, API tests) passes on every push.
-- **SC-003**: Local story generation completes in under 60 s on the reference machine (documented 40-46 s).
-- **SC-004 [GAP]**: Anthropic-provider cost per story at or below $0.19, target $0.08 (not measured in CI).
+- **SC-003**: Local story generation (`LLM_PROVIDER=local`, `ai/gemma3:4B` on Docker Model Runner) completes in under 60 s on the reference machine: the dev PC with an NVIDIA RTX 2060 (6 GB VRAM), model fully on GPU (documented 40-46 s).
+- **SC-004**: Anthropic-provider cost per story at or below $0.08. Measured as the sum of `cost_usd` over `token_usage` in the SSE `done` event (per-call USD from `app/llm/adapter.py` price table), averaged over at least 3 medium stories. Modelled on all-Haiku 5.5: ~$0.0009 typical, ~$0.0023 at token caps; measured 2026-10-16: ~$0.0016 per short story (3 stories). CI runs with a mocked LLM and does not measure cost.
