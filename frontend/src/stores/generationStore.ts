@@ -24,12 +24,14 @@ export interface GenerationState {
   nodeResults: Record<string, NodeResult>
   tokens: TokenUsage
   error: string | null
+  /** 'upgrade' when the error is the monthly plan limit (HTTP 402): the UI links to /billing. */
+  errorAction: 'upgrade' | null
 
   // Actions
   start: (storyId: string, runId: string) => void
   nodeComplete: (result: NodeResult & { tokens: TokenUsage }) => void
   finish: (tokens: TokenUsage, traceUrl: string) => void
-  setError: (msg: string) => void
+  setError: (msg: string, action?: 'upgrade' | null) => void
   reset: () => void
 }
 
@@ -42,6 +44,7 @@ const initial = {
   nodeResults: {},
   tokens: { input: 0, output: 0, cost_usd: 0 },
   error: null,
+  errorAction: null,
 }
 
 export const useGenerationStore = create<GenerationState>((set) => ({
@@ -60,8 +63,8 @@ export const useGenerationStore = create<GenerationState>((set) => ({
   finish: (tokens, traceUrl) =>
     set({ status: 'done', tokens, traceUrl }),
 
-  setError: (error) =>
-    set({ status: 'error', error }),
+  setError: (error, action = null) =>
+    set({ status: 'error', error, errorAction: action }),
 
   reset: () => set(initial),
 }))

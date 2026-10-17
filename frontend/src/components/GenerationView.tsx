@@ -1,5 +1,6 @@
 import { ExternalLink, CheckCircle2, Loader2 } from 'lucide-react'
 import { clsx } from 'clsx'
+import { Link } from 'react-router-dom'
 import type { GenerationState, NodeName } from '@/stores/generationStore'
 import type { GenerateRequest } from '@/hooks/useGenerate'
 import { normalizeBullets } from '@/lib/bullets'
@@ -24,7 +25,7 @@ const NODE_CONFIG: {
 ]
 
 export default function GenerationView({ status, genState, request }: Props) {
-  const { completedNodes, nodeResults, tokens, traceUrl, error } = genState
+  const { completedNodes, nodeResults, tokens, traceUrl, error, errorAction } = genState
   const isRunning = status === 'running'
   const isDone    = status === 'done'
 
@@ -80,8 +81,16 @@ export default function GenerationView({ status, genState, request }: Props) {
 
       {/* Error */}
       {error && (
-        <div className="card border-rose-700 bg-rose-950/40 text-rose-300 text-sm">
+        <div className="card border-rose-700 bg-rose-950/40 text-rose-300 text-sm" role="alert">
           ⚠ {error}
+          {errorAction === 'upgrade' && (
+            <>
+              {' '}
+              <Link to="/billing" className="font-medium underline hover:text-rose-200" data-testid="upgrade-link">
+                See plans and upgrade
+              </Link>
+            </>
+          )}
         </div>
       )}
 

@@ -22,6 +22,7 @@ from app.core.auth import (
     decode_token,
     get_current_user,
 )
+from app.core.limits import plan_limit, stories_this_month
 from app.models.db import User
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -57,6 +58,7 @@ class UserResponse(BaseModel):
     name: str | None
     plan: str
     stories_this_month: int
+    plan_limit: int  # 0 = unlimited
     total_tokens_used: int
     created_at: str
 
@@ -133,13 +135,18 @@ async def refresh(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
 
 @router.get("/me", summary="Current user info")
 async def me(user: User = Depends(get_current_user)):
-    """Return the authenticated user's profile."""
+    """Return the authenticated user's profile.
+
+    `stories_this_month` is 0 once a new calendar month (UTC) has started, even
+    before the stored counter is reset by the next generation. `plan_limit` 0 = unlimited.
+    """
     return {
         "id": str(user.id),
         "email": user.email,
         "name": user.name,
         "plan": user.plan.value,
-        "stories_this_month": user.stories_this_month,
+        "stories_this_month": stories_this_month(user),
+        "plan_limit": plan_limit(user.plan),
         "total_tokens_used": user.total_tokens_used,
         "created_at": user.created_at.isoformat(),
     }

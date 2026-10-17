@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     PLAN_LIMIT_FREE: int = 10
     PLAN_LIMIT_PRO: int = 200
     PLAN_LIMIT_ENTERPRISE: int = 0
+    # Plan prices in BDT, charged at checkout and shown by GET /payment/plans
+    PLAN_PRICE_PRO_BDT: float = 499.0
+    PLAN_PRICE_ENTERPRISE_BDT: float = 1499.0
     RATE_LIMIT_PER_MINUTE: int = 5   # generate calls per user per minute; 0 disables
 
     # Semantic cache (pgvector near-duplicate lookup before generation)
